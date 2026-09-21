@@ -3,9 +3,9 @@ from pathlib import Path
 
 import numpy as np
 
-from app.config import EMBEDDING_DIM, REMOTECLIP_CHECKPOINT
-from app.embeddings.clip_embedder import embed_image_tile, embed_text
-from app.geospatial import catalog_db as db
+from backend.app.config import EMBEDDING_DIM, REMOTECLIP_CHECKPOINT
+from backend.app.embeddings.clip_embedder import embed_image_tile, embed_text
+from backend.app.geospatial import catalog_db as db
 
 
 class RemoteClipRealTileValidationTests(unittest.TestCase):

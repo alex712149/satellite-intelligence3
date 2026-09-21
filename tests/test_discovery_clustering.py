@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.discovery.clustering import _choose_cluster_strategy
+from backend.app.discovery.clustering import _choose_cluster_strategy
 
 
 def test_discovery_uses_partition_strategy_when_hdbscan_is_too_sparse():

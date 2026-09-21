@@ -6,7 +6,7 @@ import csv
 import json
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -19,17 +19,18 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from app.config import OLLAMA_HOST, OLLAMA_MODEL, TILE_SIZE_PX
-from app.change import storyline, temporal_signature
-from app.change import adaptive, brief, heatmap, sar
-from app.discovery import clustering
-from app.geospatial import catalog_db as db
-from app.index import search as index_search
-from app.index.vector_index import VectorIndex
-from app.pipeline import onboard_aoi as onboarding
-from app.review import queue as review_queue
-from app.geospatial.rendering import has_valid_multispectral_data
-from app.geospatial.sar_features import find_matching_sar_pair
+from backend.app.config import OLLAMA_HOST, OLLAMA_MODEL, TILE_SIZE_PX
+from backend.app.change import storyline, temporal_signature
+from backend.app.change import adaptive, brief, heatmap, sar
+from backend.app.discovery import clustering
+from backend.app.geospatial import catalog_db as db
+from backend.app.index import search as index_search
+from backend.app.index.vector_index import VectorIndex
+from backend.app.pipeline import onboard_aoi as onboarding
+from backend.app.review import queue as review_queue
+from backend.app.geospatial.rendering import has_valid_multispectral_data
+from backend.app.geospatial.sar_features import find_matching_sar_pair
+from backend.app.geospatial.sar_rendering import render_sar_visuals
 from .rendering import difference_image, mosaic_thumbnail, tile_thumbnail
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -381,23 +382,35 @@ class TextSearchRequest(BaseModel):
 
 
 app = FastAPI(title="Satellite Intelligence API")
-default_origins = (
-    "http://localhost:5173,http://127.0.0.1:5173,"
-    "http://localhost:4173,http://127.0.0.1:4173,"
-    "http://localhost:4174,http://127.0.0.1:4174,"
-    "http://0.0.0.0:4173,http://0.0.0.0:4174"
-)
-origins = [item.strip() for item in os.getenv("CORS_ALLOWED_ORIGINS", default_origins).split(",") if item.strip()]
+
+raw_origins = os.getenv("CORS_ALLOWED_ORIGINS")
+default_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+    "http://localhost:4174",
+    "http://127.0.0.1:4174",
+    "http://0.0.0.0:4173",
+    "http://0.0.0.0:4174",
+]
+origins = [item.strip() for item in (raw_origins or ",".join(default_origins)).split(",") if item.strip()]
+if not origins:
+    origins = default_origins
 app.add_middleware(
-	CORSMiddleware,
-	allow_origins=origins,
-	allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
-	allow_credentials=True,
-	allow_methods=["*"],
-	allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Accept", "Accept-Language", "Authorization", "Content-Type", "X-Requested-With"],
 )
 app.mount("/generated", StaticFiles(directory=GENERATED_DIR, check_dir=False), name="generated")
 db.init_db()
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "geospectra-api"}
 
 
 def public_url(request: Request, path: Path | None) -> str | None:
@@ -442,6 +455,107 @@ def tile_public(row, request: Request) -> dict:
 		"bbox": tile_bbox(row), "ndvi_mean": row["ndvi_mean"], "ndwi_mean": row["ndwi_mean"],
 		"cloud_fraction": row["cloud_fraction"], "valid_pixel_fraction": row["valid_pixel_fraction"],
 		"cluster_id": row["cluster_id"], "processing_version": row["processing_version"], "thumbnail_url": thumbnail,
+	}
+
+
+def _observation_thumbnail_url(request: Request, row) -> str | None:
+	tile_path = _obj_value(row, "tile_path")
+	vector_id = _obj_value(row, "vector_id")
+	if not row or not tile_path:
+		return None
+	if not Path(tile_path).exists():
+		return None
+	if not has_valid_multispectral_data(tile_path):
+		return None
+	return public_url(request, tile_thumbnail(tile_path, GENERATED_DIR / "thumbnails", vector_id))
+
+
+def _normalize_date(value: str | None):
+	if not value:
+		return None
+	try:
+		return datetime.fromisoformat(value).date().isoformat()
+	except ValueError:
+		return None
+
+
+def _obj_value(obj, key: str, default=None):
+	if obj is None:
+		return default
+	if isinstance(obj, dict):
+		return obj.get(key, default)
+	try:
+		return obj[key]
+	except (KeyError, TypeError, IndexError):
+		return default
+
+
+def _row_value(row, key: str, default=None):
+	return _obj_value(row, key, default)
+
+
+def _resolve_query_dates(tile_id: str, from_date: str | None, to_date: str | None):
+	history = db.get_tile_history(tile_id)
+	if not history:
+		return None, None, []
+	obs_dates = [row["acquisition_date"] for row in history if _obj_value(row, "acquisition_date")]
+	if not obs_dates:
+		return None, None, []
+	start = min(obs_dates)
+	end = max(obs_dates)
+	requested_from = _normalize_date(from_date) if from_date else start
+	requested_to = _normalize_date(to_date) if to_date else end
+	if requested_from is None:
+		requested_from = start
+	if requested_to is None:
+		requested_to = end
+	if requested_from < start:
+		requested_from = start
+	if requested_to > end:
+		requested_to = end
+	filtered = [row for row in history if _obj_value(row, "acquisition_date") and requested_from <= row["acquisition_date"] <= requested_to]
+	if not filtered:
+		filtered = history
+		requested_from = min(obs_dates)
+		requested_to = max(obs_dates)
+	return requested_from, requested_to, filtered
+
+
+def _sar_observation_for_date(tile_id: str, target_date: str):
+	"""Return the nearest registered SAR raster within the optical match window."""
+	try:
+		target = datetime.fromisoformat(target_date).date()
+	except ValueError:
+		return None
+	best = None
+	with db.get_conn() as conn:
+		rows = conn.execute("SELECT * FROM sar_tiles WHERE tile_id=? ORDER BY acquisition_datetime, period_start", (tile_id,)).fetchall()
+	for row in rows:
+		candidate_value = row["acquisition_datetime"] or row["period_start"] or row["period_end"]
+		if not candidate_value:
+			continue
+		try:
+			candidate = datetime.fromisoformat(str(candidate_value).replace("Z", "+00:00")).date()
+		except ValueError:
+			continue
+		distance = abs((candidate - target).days)
+		if distance <= 7 and (best is None or distance < best[0]):
+			best = (distance, row)
+	return best[1] if best else None
+
+
+def _sar_public(row, request: Request) -> dict | None:
+	if row is None:
+		return None
+	visuals = render_sar_visuals(row, GENERATED_DIR / "sar")
+	return {
+		"observation_id": row["sar_tile_id"],
+		"acquisition_datetime": row["acquisition_datetime"],
+		"product_type": row["product_type"],
+		"vv_mean_db": row["vv_mean_db"], "vh_mean_db": row["vh_mean_db"],
+		"vv_minus_vh_db": row["vv_minus_vh_db"], "vv_std_db": row["vv_std_db"],
+		"vh_std_db": row["vh_std_db"], "valid_fraction": row["valid_pixels"],
+		"visuals": {name: public_url(request, Path(path)) if path else None for name, path in visuals.items()},
 	}
 
 
@@ -733,6 +847,153 @@ def tile(tile_id: str, request: Request):
 	return tile_public(row, request)
 
 
+@app.get("/tiles/{tile_id}/observations")
+def tile_observations(tile_id: str, request: Request):
+	history = db.get_tile_history(tile_id)
+	if not history:
+		raise HTTPException(404, "Tile not found")
+	output = []
+	with db.get_conn() as conn:
+		sar_rows = conn.execute("SELECT * FROM sar_tiles WHERE tile_id=? ORDER BY acquisition_datetime, period_start", (tile_id,)).fetchall()
+	for row in history:
+		aoi_id = _row_value(row, "aoi_id")
+		aoi = db.get_aoi(aoi_id) if aoi_id is not None else None
+		sar_match = _sar_observation_for_date(tile_id, row["acquisition_date"])
+		output.append({
+			"observation_id": row["vector_id"], "vector_id": row["vector_id"],
+			"tile_id": row["tile_id"],
+			"acquisition_date": row["acquisition_date"], "acquisition_datetime": None,
+			"image_url": _observation_thumbnail_url(request, row),
+			"thumbnail_url": _observation_thumbnail_url(request, row),
+			"scene_id": scene_id(aoi["name"] if aoi else str(aoi_id), row["acquisition_date"]),
+			"sensor": row["sensor"],
+			"cloud_fraction": row["cloud_fraction"], "valid_pixel_fraction": row["valid_pixel_fraction"],
+			"ndvi_mean": row["ndvi_mean"], "ndwi_mean": row["ndwi_mean"],
+			"has_sar": bool(sar_match),
+			"sar_observation_id": sar_match["sar_tile_id"] if sar_match else None,
+			"sar_acquisition_datetime": sar_match["acquisition_datetime"] if sar_match else None,
+			"sar_visual_count": 4 if sar_match and sar_match["tile_path"] and Path(sar_match["tile_path"]).exists() else 0,
+		})
+	return {"tile_id": tile_id, "observations": output}
+
+
+@app.get("/tiles/{tile_id}/analysis")
+def tile_analysis(tile_id: str, request: Request, before: str | None = Query(None), after: str | None = Query(None), from_date: str | None = Query(None), to_date: str | None = Query(None)):
+	history = db.get_tile_history(tile_id)
+	if not history:
+		raise HTTPException(404, "Tile not found")
+	resolved_from = _normalize_date(from_date or before) or history[0]["acquisition_date"]
+	resolved_to = _normalize_date(to_date or after) or history[-1]["acquisition_date"]
+	by_date = {row["acquisition_date"]: row for row in history}
+	if resolved_from not in by_date or resolved_to not in by_date:
+		raise HTTPException(422, "from_date and to_date must be actual observations for this tile")
+	if resolved_from >= resolved_to:
+		raise HTTPException(422, "from_date must be earlier than to_date")
+	filtered_history = [row for row in history if resolved_from <= row["acquisition_date"] <= resolved_to]
+	velocity = temporal_signature.compute_velocity(tile_id)
+	series = velocity.series
+	selected_series = []
+	if series:
+		for item in series:
+			before = item.get("date_pair", {}).get("before")
+			after = item.get("date_pair", {}).get("after")
+			if before and after and resolved_from and resolved_to:
+				if resolved_from <= before <= resolved_to or resolved_from <= after <= resolved_to:
+					selected_series.append(item)
+		if not selected_series:
+			selected_series = series
+	obs_out = []
+	for row in filtered_history:
+		aoi_id = _row_value(row, "aoi_id")
+		aoi = db.get_aoi(aoi_id) if aoi_id is not None else None
+		obs_out.append({
+			"date": row["acquisition_date"],
+			"source": row["sensor"] or "SENTINEL2",
+			"sensor": row["sensor"],
+			"thumbnail_url": _observation_thumbnail_url(request, row),
+			"quality": "ok" if (row["cloud_fraction"] is None or row["cloud_fraction"] <= 0.25) else "cloud-degraded",
+			"score": row["ndvi_mean"],
+			"note": None,
+		})
+	before_row = filtered_history[0] if filtered_history else history[0]
+	after_row = filtered_history[-1] if filtered_history else history[-1]
+	numeric_values = [float(row["ndvi_mean"]) for row in filtered_history if _row_value(row, "ndvi_mean") is not None]
+	numeric_water = [float(row["ndwi_mean"]) for row in filtered_history if _row_value(row, "ndwi_mean") is not None]
+	before_ndvi = _row_value(before_row, "ndvi_mean"); after_ndvi = _row_value(after_row, "ndvi_mean")
+	before_ndwi = _row_value(before_row, "ndwi_mean"); after_ndwi = _row_value(after_row, "ndwi_mean")
+	metrics = {
+		"ndvi_delta": (after_ndvi - before_ndvi) if before_ndvi is not None and after_ndvi is not None else None,
+		"ndwi_delta": (after_ndwi - before_ndwi) if before_ndwi is not None and after_ndwi is not None else None,
+		"velocity": velocity.latest_velocity,
+		"acceleration": velocity.acceleration,
+		"drift": (after_ndvi - before_ndvi) if before_ndvi is not None and after_ndvi is not None else None,
+	}
+	optical = {
+		"dates": [row["acquisition_date"] for row in filtered_history],
+		"ndvi": [row["ndvi_mean"] for row in filtered_history],
+		"ndwi": [row["ndwi_mean"] for row in filtered_history],
+		"cloud_fraction": [row["cloud_fraction"] for row in filtered_history],
+	}
+	sar_rows = db.list_sar_observations(tile_id)
+	selected_sar = [dict(row) for row in sar_rows if (resolved_from is None or row["acquisition_date"] >= resolved_from) and (resolved_to is None or row["acquisition_date"] <= resolved_to)]
+	sar_values = {
+		"dates": [row["acquisition_date"] for row in selected_sar],
+		"vv_mean": [row["vv_mean"] for row in selected_sar],
+		"vh_mean": [row["vh_mean"] for row in selected_sar],
+		"valid_fraction": [row["valid_fraction"] for row in selected_sar],
+	}
+	response = {
+		"tile_id": tile_id,
+		"aoi_id": history[0]["aoi_id"],
+		"range": {
+			"from": resolved_from,
+			"to": resolved_to,
+			"label": f"{resolved_from} → {resolved_to}",
+			"days": (datetime.fromisoformat(resolved_to) - datetime.fromisoformat(resolved_from)).days if resolved_from and resolved_to else None,
+		},
+		"before": {"date": before_row["acquisition_date"], "image_url": _observation_thumbnail_url(request, before_row), "sensor": before_row["sensor"], "quality": before_row["cloud_fraction"]},
+		"after": {"date": after_row["acquisition_date"], "image_url": _observation_thumbnail_url(request, after_row), "sensor": after_row["sensor"], "quality": after_row["cloud_fraction"]},
+		"velocity": velocity,
+		"optical": optical,
+		"sar": sar_values,
+		"fusion": {"optical": optical, "sar": sar_values},
+		"events": [{"date": row["acquisition_date"], "label": "observation", "severity": "low", "detail": f"{row['sensor'] or 'optical'} acquisition"} for row in filtered_history[:5]],
+		"metrics": metrics,
+		"quality": {"range_applied": bool(from_date or to_date), "observations_used": len(filtered_history), "sar_available": bool(selected_sar)},
+		"visuals": {"before": {"date": before_row["acquisition_date"], "image_url": _observation_thumbnail_url(request, before_row)}, "after": {"date": after_row["acquisition_date"], "image_url": _observation_thumbnail_url(request, after_row)}},
+		"observations": obs_out,
+		"range_label": f"{resolved_from} → {resolved_to}",
+		"sar_observations": selected_sar,
+		"series": selected_series,
+	}
+	response["indices"] = [
+		{"name": "NDVI", "before": before_row["ndvi_mean"], "after": after_row["ndvi_mean"], "delta": metrics["ndvi_delta"], "available": before_row["ndvi_mean"] is not None and after_row["ndvi_mean"] is not None},
+		{"name": "NDWI", "before": before_row["ndwi_mean"], "after": after_row["ndwi_mean"], "delta": metrics["ndwi_delta"], "available": before_row["ndwi_mean"] is not None and after_row["ndwi_mean"] is not None},
+	]
+	before_sar = _sar_observation_for_date(tile_id, resolved_from)
+	after_sar = _sar_observation_for_date(tile_id, resolved_to)
+	response["sar_evidence"] = {"available": bool(before_sar and after_sar), "before": _sar_public(before_sar, request), "after": _sar_public(after_sar, request)}
+	return response
+
+
+@app.get("/tiles/{tile_id}/analysis/series")
+def tile_analysis_series(tile_id: str):
+	history = db.get_tile_history(tile_id)
+	if not history:
+		raise HTTPException(404, "Tile not found")
+	velocity = temporal_signature.compute_velocity(tile_id)
+	with db.get_conn() as conn:
+		sar_rows = conn.execute("SELECT * FROM sar_tiles WHERE tile_id=? ORDER BY acquisition_datetime, period_start", (tile_id,)).fetchall()
+	return {
+		"tile_id": tile_id,
+		"coverage": {"first_date": history[0]["acquisition_date"], "latest_date": history[-1]["acquisition_date"], "observation_count": len(history), "sar_observation_count": len(sar_rows)},
+		"velocity_series": [{"date": item["date_pair"]["after"], "before": item["date_pair"]["before"], "after": item["date_pair"]["after"], "velocity": item["velocity"], "change_score": item["velocity"] * max((datetime.fromisoformat(item["date_pair"]["after"]) - datetime.fromisoformat(item["date_pair"]["before"])).days, 1), "source": item["source"]} for item in velocity.series],
+		"optical_series": {name: [{"date": row["acquisition_date"], "value": row[column]} for row in history if row[column] is not None] for name, column in (("ndvi", "ndvi_mean"), ("ndwi", "ndwi_mean"))},
+		"sar_series": {"vv": [{"date": (row["acquisition_datetime"] or row["period_start"] or row["period_end"])[:10], "datetime": row["acquisition_datetime"], "value_db": row["vv_mean_db"], "observation_id": row["sar_tile_id"]} for row in sar_rows if row["vv_mean_db"] is not None], "vh": [{"date": (row["acquisition_datetime"] or row["period_start"] or row["period_end"])[:10], "datetime": row["acquisition_datetime"], "value_db": row["vh_mean_db"], "observation_id": row["sar_tile_id"]} for row in sar_rows if row["vh_mean_db"] is not None], "vv_minus_vh": [], "change_score": [], "valid_fraction": []},
+		"fusion_series": {"change_score": [], "embedding_drift": []},
+	}
+
+
 @app.get("/changes/velocity")
 def change_velocity(limit: int = Query(8, ge=1, le=48), offset: int = Query(0, ge=0), include_series: bool = Query(True)):
 	results = temporal_signature.velocity_for_all_tiles()
@@ -742,6 +1003,8 @@ def change_velocity(limit: int = Query(8, ge=1, le=48), offset: int = Query(0, g
 	return [
 		{
 			"tile_id": tile_id,
+			"first_observation": (db.get_tile_history(tile_id)[0]["acquisition_date"] if db.get_tile_history(tile_id) else None),
+			"latest_observation": (db.get_tile_history(tile_id)[-1]["acquisition_date"] if db.get_tile_history(tile_id) else None),
 			"trend": result.trend,
 			"latest_velocity": result.latest_velocity,
 			"acceleration": result.acceleration,
@@ -753,14 +1016,28 @@ def change_velocity(limit: int = Query(8, ge=1, le=48), offset: int = Query(0, g
 
 
 @app.get("/tiles/{tile_id}/temporal-signature")
-def temporal_signature_detail(tile_id: str):
+def temporal_signature_detail(tile_id: str, range_days: int | None = Query(None, ge=1, le=3650)):
 	if not db.get_tile_history(tile_id):
 		raise HTTPException(404, "Tile not found")
 	result = temporal_signature.compute_velocity(tile_id)
+	series = result.series
+	velocities = result.velocities
+	if range_days is not None and series:
+		date_values = [item.get("date_pair", {}).get("after") for item in series]
+		parsed_dates = [datetime.fromisoformat(value) for value in date_values if value]
+		if parsed_dates:
+			cutoff = max(parsed_dates) - timedelta(days=range_days)
+			selected = [
+				(index, item)
+				for index, item in enumerate(series)
+				if item.get("date_pair", {}).get("after") and datetime.fromisoformat(item["date_pair"]["after"]) >= cutoff
+			]
+			series = [item for _, item in selected]
+			velocities = [velocities[index] for index, _ in selected]
 	return {
-		"series": result.series,
-		"velocities": result.velocities,
-		"score_sources": result.score_sources,
+		"series": series,
+		"velocities": velocities,
+		"score_sources": result.score_sources[-len(series):] if series else [],
 		"acceleration": result.acceleration,
 		"trend": result.trend,
 		"latest_velocity": result.latest_velocity,
@@ -778,19 +1055,21 @@ def temporal_evolution(tile_id: str, request: Request):
 	score_sources = getattr(velocity, "score_sources", ["combined"] * max(1, len(velocity.velocities or [0])))
 	for idx, selected in enumerate(temporal_signature.select_temporal_keyframes(history)):
 		stage = temporal_signature._stage_label(idx, min(5, len(history)))
-		aoi = db.get_aoi(selected.get("aoi_id")) if selected.get("aoi_id") is not None else None
-		date_value = selected.get("date") or selected.get("acquisition_date")
-		path = selected.get("tile_path")
-		vector_id = selected.get("vector_id")
+		aoi_id = _obj_value(selected, "aoi_id")
+		aoi = db.get_aoi(aoi_id) if aoi_id is not None else None
+		date_value = _obj_value(selected, "date") or _obj_value(selected, "acquisition_date")
+		path = _obj_value(selected, "tile_path")
+		vector_id = _obj_value(selected, "vector_id")
 		thumb = None
 		if path and vector_id is not None and Path(path).exists():
 			thumb = public_url(request, tile_thumbnail(path, GENERATED_DIR / "thumbnails", int(vector_id)))
 		quality = "ok"
-		if selected.get("cloud_fraction") is not None and float(selected.get("cloud_fraction", 0)) > 0.25:
+		cloud_fraction = _obj_value(selected, "cloud_fraction")
+		if cloud_fraction is not None and float(cloud_fraction) > 0.25:
 			quality = "cloud-degraded"
 		frame = {
 			"date": date_value,
-			"sensor": selected.get("sensor") or "SENTINEL2",
+			"sensor": _obj_value(selected, "sensor") or "SENTINEL2",
 			"image_url": thumb,
 			"thumbnail_url": thumb,
 			"stage": stage,
@@ -798,8 +1077,8 @@ def temporal_evolution(tile_id: str, request: Request):
 			"score_source": score_sources[min(idx, len(score_sources) - 1)] if score_sources else "combined",
 			"quality": quality,
 			"selected": idx == max(0, min(len(history) - 1, len(history) // 2)),
-			"asset_tile_id": selected.get("tile_id"),
-			"asset_aoi_id": aoi["name"] if aoi else selected.get("aoi_id"),
+			"asset_tile_id": _obj_value(selected, "tile_id"),
+			"asset_aoi_id": aoi["name"] if aoi else _obj_value(selected, "aoi_id"),
 			"location": aoi["name"] if aoi else None,
 		}
 		frames.append(frame)
@@ -830,7 +1109,7 @@ def tile_storyline(tile_id: str):
 
 @app.get("/system/llm-status")
 def system_llm_status():
-	from app.config import OLLAMA_HOST, OLLAMA_MODEL
+	from backend.app.config import OLLAMA_HOST, OLLAMA_MODEL
 	available = False
 	model_pulled = False
 	try:
@@ -950,7 +1229,7 @@ def candidates(request: Request, status: str | None = None, aoi_id: str | None =
 
 @app.post("/changes/recompute-priority")
 def recompute_priority():
-	from app.change.priority import compute_priority
+	from backend.app.change.priority import compute_priority
 	updated = 0
 	with db.get_conn() as conn:
 		rows = conn.execute("SELECT cc.*, t.minlat, t.maxlat, t.minlon, t.maxlon, a.* FROM change_candidates cc JOIN tiles t ON t.vector_id=cc.vector_id_after LEFT JOIN aois a ON a.aoi_id=t.aoi_id").fetchall()
@@ -1046,7 +1325,7 @@ def change(vector_id: int, request: Request):
 				"UPDATE change_candidates SET changed_fraction=?, pixel_diff_score=?, change_region=?, change_centroid_x=?, change_centroid_y=? WHERE candidate_id=?",
 				(changed_fraction, changed_fraction, change_region, centroid_x, centroid_y, row["candidate_id"]),
 			)
-		from app.change.heatmap import spectral_diff_heatmap
+		from backend.app.change.heatmap import spectral_diff_heatmap
 		heatmap_path = row["heatmap_spectral"] or spectral_diff_heatmap(before["tile_path"], after["tile_path"])
 		if heatmap_path and not row["heatmap_spectral"]:
 			with db.get_conn() as conn:
@@ -1091,7 +1370,7 @@ def change(vector_id: int, request: Request):
 				   "bbox": tile_bbox(after), "ndvi_series": [{"date": item["acquisition_date"], "ndvi_mean": item["ndvi_mean"], "ndwi_mean": item["ndwi_mean"], "cloud_fraction": item["cloud_fraction"]} for item in history],
 																		 "quality_notes": quality_notes,
 																	 "acquisition_date_source": scene_source(after["scene_path"]), "processing_version": after["processing_version"], "sar_evidence": sar_evidence})
-	from app.change.narrative import build_narrative
+	from backend.app.change.narrative import build_narrative
 	narrative = build_narrative(
 		before_date=row["date_before"], after_date=row["date_after"], change_region=change_region,
 		changed_fraction=changed_fraction, ndvi_change=ndvi_change, spectral_delta=row["spectral_delta"],
@@ -1111,15 +1390,15 @@ def change(vector_id: int, request: Request):
 
 @app.post("/calibration/run")
 def run_calibration():
-	from app.change.calibration import calibrate_from_audit
+	from backend.app.change.calibration import calibrate_from_audit
 	return calibrate_from_audit()
 
 
 @app.get("/calibration/results")
 def get_calibration_results():
-	from app.change.calibration import calibration_results
+	from backend.app.change.calibration import calibration_results
 	result = calibration_results()
-	from app.review.queue import learner_status
+	from backend.app.review.queue import learner_status
 	if isinstance(result, dict):
 		result["learner"] = learner_status()
 	return result
@@ -1276,7 +1555,7 @@ def onboard_job(job_id: str):
 @app.post("/sar/observations")
 def ingest_sar_observation(payload: SARIngestRequest):
 	"""Compute and register a Sentinel-1 raster in the canonical SAR tile store."""
-	from app.geospatial.sar_features import compute_sar_features
+	from backend.app.geospatial.sar_features import compute_sar_features
 	db.init_db()
 	features = compute_sar_features(payload.scene_path)
 	sar_id = db.register_sar_tile(
@@ -1329,7 +1608,7 @@ def candidate_explanations(candidate_id: int):
 
 @app.post("/changes/{candidate_id}/brief")
 def generate_candidate_brief(candidate_id: int):
-	from app.change.llm_brief import generate_llm_brief
+	from backend.app.change.llm_brief import generate_llm_brief
 	with db.get_conn() as conn:
 		row = conn.execute("SELECT * FROM change_candidates WHERE candidate_id=?", (candidate_id,)).fetchone()
 	if row is None:

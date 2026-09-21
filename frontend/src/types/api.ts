@@ -321,6 +321,8 @@ export interface TemporalSignature {
 
 export interface VelocityTile extends TemporalSignature {
   tile_id: string;
+  first_observation?: string | null;
+  latest_observation?: string | null;
 }
 
 export interface StorylineProfile {
@@ -334,4 +336,140 @@ export interface Storyline {
   profile: StorylineProfile;
   velocities: number[];
   stage: string;
+}
+
+export interface AnalysisRange {
+  key: string;
+  label: string;
+  days: number | null;
+  description: string;
+}
+
+export interface TileObservation {
+  observation_id: number;
+  vector_id: number;
+  tile_id: string;
+  acquisition_date: string;
+  acquisition_datetime: string | null;
+  image_url: string | null;
+  thumbnail_url: string | null;
+  scene_id: string | null;
+  sensor: string | null;
+  cloud_fraction: number | null;
+  valid_pixel_fraction: number | null;
+  ndvi_mean: number | null;
+  ndwi_mean: number | null;
+  has_sar: boolean;
+  sar_observation_id: number | null;
+  sar_acquisition_datetime: string | null;
+  sar_visual_count: number;
+}
+
+export interface TileObservationsResponse {
+  tile_id: string;
+  observations: TileObservation[];
+}
+
+export interface AnalysisObservation {
+  date: string;
+  source: string;
+  sensor: string | null;
+  thumbnail_url: string | null;
+  quality: string | null;
+  score: number | null;
+  note?: string | null;
+}
+
+export interface OpticalSeries {
+  dates: string[];
+  ndvi: number[];
+  ndwi: number[];
+  cloud_fraction: number[];
+}
+
+export interface SarSeries {
+  dates: string[];
+  vv_db?: number[];
+  vh_db?: number[];
+  vv_mean?: number[];
+  vh_mean?: number[];
+  valid_fraction?: number[];
+  vv_minus_vh_db?: number[];
+}
+
+export interface FusionSeries {
+  optical: OpticalSeries;
+  sar: SarSeries;
+}
+
+export interface AnalysisEvent {
+  date: string;
+  label: string;
+  severity: 'low' | 'medium' | 'high';
+  detail: string;
+}
+
+export interface AnalysisMetrics {
+  ndvi_delta: number | null;
+  ndwi_delta: number | null;
+  velocity: number | null;
+  acceleration: number | null;
+  drift: number | null;
+}
+
+export interface TemporalAnalysis {
+  tile_id: string;
+  aoi_id: string | null;
+  range: {
+    from: string | null;
+    to: string | null;
+    label: string;
+    days: number | null;
+  };
+  range_days: number | null;
+  range_label: string;
+  observations: AnalysisObservation[];
+  optical: OpticalSeries;
+  sar: SarSeries | null;
+  before?: { date: string; image_url: string | null; sensor: string | null; quality: number | null } | null;
+  after?: { date: string; image_url: string | null; sensor: string | null; quality: number | null } | null;
+  velocity?: {
+    latest_velocity: number | null;
+    acceleration: number | null;
+    series: Array<{ date_pair: { before: string; after: string }; velocity: number; source: string }>;
+  } | null;
+  sar_observations?: Array<{
+    sar_id?: number | string;
+    acquisition_date: string;
+    vv_mean?: number | null;
+    vh_mean?: number | null;
+    valid_fraction?: number | null;
+    sensor?: string | null;
+    scene_path?: string | null;
+  }>;
+  fusion: FusionSeries | null;
+  events: AnalysisEvent[];
+  metrics: AnalysisMetrics;
+  quality?: { range_applied: boolean; observations_used: number; sar_available: boolean } | null;
+  visuals?: { before: { date: string; image_url: string | null } | null; after: { date: string; image_url: string | null } | null } | null;
+  indices?: Array<{ name: string; before: number | null; after: number | null; delta: number | null; available: boolean }>;
+  series?: Array<{ date_pair: { before: string; after: string }; velocity: number; source: string }>;
+  sar_evidence?: {
+    available: boolean;
+    before: SarEvidence | null;
+    after: SarEvidence | null;
+  };
+}
+
+export interface SarEvidence {
+  observation_id: number;
+  acquisition_datetime: string | null;
+  product_type: string | null;
+  vv_mean_db: number | null;
+  vh_mean_db: number | null;
+  vv_minus_vh_db: number | null;
+  vv_std_db: number | null;
+  vh_std_db: number | null;
+  valid_fraction: number | null;
+  visuals: { vv_raw: string | null; vh_raw: string | null; rgb_ratio: string | null; sar_urban: string | null };
 }

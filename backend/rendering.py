@@ -5,8 +5,8 @@ import numpy as np
 import rasterio
 from PIL import Image
 
-from app.config import TILE_SIZE_PX
-from app.geospatial.rendering import true_color_image
+from backend.app.config import TILE_SIZE_PX
+from backend.app.geospatial.rendering import true_color_image
 
 
 RENDER_VERSION = "rgb-v2"

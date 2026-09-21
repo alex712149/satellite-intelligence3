@@ -2,10 +2,10 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from app.change import detector
-from app.change.adaptive import adaptive_score
-from app.geospatial import catalog_db
-from app.geospatial.sar_features import SarFeatures, sar_change_score, compute_sar_features
+from backend.app.change import detector
+from backend.app.change.adaptive import adaptive_score
+from backend.app.geospatial import catalog_db
+from backend.app.geospatial.sar_features import SarFeatures, sar_change_score, compute_sar_features
 
 
 def test_sar_score_is_independent_of_optical_when_valid():

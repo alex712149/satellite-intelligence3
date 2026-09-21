@@ -15,6 +15,7 @@ import { OnboardPage } from '@/pages/OnboardPage';
 import { AuditLogPage } from '@/pages/AuditLogPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { VelocityPage } from '@/pages/VelocityPage';
+import { AnalysisStudioPage } from '@/pages/AnalysisStudioPage';
 
 export const router = createBrowserRouter([
   {
@@ -44,6 +45,10 @@ export const router = createBrowserRouter([
       {
         path: 'aois/:aoiId',
         element: <AOIDetailPage />,
+      },
+      {
+        path: 'tiles/:tileId/analysis',
+        element: <AnalysisStudioPage />,
       },
       {
         path: 'tiles/:tileId',

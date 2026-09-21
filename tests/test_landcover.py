@@ -1,4 +1,4 @@
-from app.change.landcover import classify_land_cover, optical_weights
+from backend.app.change.landcover import classify_land_cover, optical_weights
 
 
 def test_landcover_boundaries_and_unknowns():

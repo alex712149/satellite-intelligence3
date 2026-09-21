@@ -2,10 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { Storyline, TemporalEvolution, TemporalSignature } from '@/types/api';
 
-export function useTemporalSignature(tileId: string | undefined) {
+export function useTemporalSignature(tileId: string | undefined, rangeDays?: number | null) {
   return useQuery<TemporalSignature>({
-    queryKey: ['temporal-signature', tileId],
-    queryFn: ({ signal }) => api.get<TemporalSignature>(`/tiles/${tileId}/temporal-signature`, undefined, signal),
+    queryKey: ['temporal-signature', tileId, rangeDays],
+    queryFn: ({ signal }) => api.get<TemporalSignature>(`/tiles/${tileId}/temporal-signature`, { range_days: rangeDays }, signal),
     enabled: Boolean(tileId),
     staleTime: 30000,
   });

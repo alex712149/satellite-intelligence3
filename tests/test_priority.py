@@ -1,4 +1,4 @@
-from app.change.priority import compute_priority, haversine_km
+from backend.app.change.priority import compute_priority, haversine_km
 
 
 def test_priority_tier_and_hotspot_decay():

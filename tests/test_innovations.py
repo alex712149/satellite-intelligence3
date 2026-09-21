@@ -1,8 +1,8 @@
 import numpy as np
 
-from app.change.adaptive import adaptive_score, infer_land_cover, strategic_priority, active_learning_probability
-from app.change.heatmap import explainable_heatmaps
-from app.change.sar import fuse_modalities, sar_change_score
+from backend.app.change.adaptive import adaptive_score, infer_land_cover, strategic_priority, active_learning_probability
+from backend.app.change.heatmap import explainable_heatmaps
+from backend.app.change.sar import fuse_modalities, sar_change_score
 
 
 def test_sar_fusion_is_bounded_and_detects_delta():

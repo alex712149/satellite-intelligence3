@@ -2,7 +2,7 @@ import pickle
 
 from sklearn.linear_model import LogisticRegression
 
-from app.review import queue
+from backend.app.review import queue
 
 
 def test_active_learner_uses_trained_model(monkeypatch, tmp_path):

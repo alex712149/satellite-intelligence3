@@ -1,4 +1,4 @@
-from app.change import llm_brief
+from backend.app.change import llm_brief
 
 
 def test_llm_brief_connection_failure_is_safe(monkeypatch):

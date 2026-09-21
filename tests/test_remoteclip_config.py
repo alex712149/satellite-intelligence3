@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import app.config as config
+import backend.app.config as config
 
 
 class RemoteClipConfigTests(unittest.TestCase):

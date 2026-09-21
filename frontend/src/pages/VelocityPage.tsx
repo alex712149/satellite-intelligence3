@@ -1,34 +1,214 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Activity, ArrowRight, Camera } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Activity, ArrowUpRight, Gauge, TrendingDown, TrendingUp } from 'lucide-react';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useVelocity } from '@/hooks/useVelocity';
+import { useTileObservations } from '@/hooks/useTiles';
 import { GlassPanel } from '@/components/common/GlassPanel';
-import { TemporalSignatureChart } from '@/components/common/TemporalSignatureChart';
-import { SkeletonCard } from '@/components/common/SkeletonCard';
 import { ErrorCard } from '@/components/common/ErrorCard';
-import { EmptyState } from '@/components/common/EmptyState';
+import { SkeletonCard } from '@/components/common/SkeletonCard';
+import { TileThumbnail } from '@/components/common/TileThumbnail';
 import { formatDate } from '@/lib/utils';
+import type { VelocityTile } from '@/types/api';
+
+const trendMeta: Record<string, { label: string; color: string; icon: React.ElementType }> = {
+  stable: { label: 'Stable', color: 'text-slate-300', icon: Gauge },
+  steady_change: { label: 'Steady Change', color: 'text-sky-300', icon: Activity },
+  accelerating: { label: 'Accelerating', color: 'text-amber-300', icon: TrendingUp },
+  decelerating: { label: 'Decelerating', color: 'text-rose-300', icon: TrendingDown },
+};
+
+function Metric({ label, value, accent }: { label: string; value: number | string; accent: string }) {
+  return (
+    <div className="border-l border-white/[0.1] pl-4">
+      <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-text-muted">{label}</div>
+      <div className={`mt-2 text-2xl font-mono font-semibold ${accent}`}>{value}</div>
+    </div>
+  );
+}
 
 export const VelocityPage: React.FC = () => {
-  const navigate = useNavigate();
-  const [limit, setLimit] = React.useState(8);
-  const { data, isLoading, isError, refetch } = useVelocity(limit);
-  const tiles = data?.filter((tile) => tile.series.length >= 2) || [];
+  const { data, isLoading, isError, refetch } = useVelocity();
+  const records = data || [];
+  const [selectedTileId, setSelectedTileId] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+
+  useEffect(() => {
+    if (!selectedTileId && records[0]) setSelectedTileId(records[0].tile_id);
+  }, [records, selectedTileId]);
+
+  const selected = records.find((item) => item.tile_id === selectedTileId) || records[0];
+  const { data: selectedObservations = [] } = useTileObservations(selected?.tile_id);
+
+  useEffect(() => {
+    if (!selected) return;
+    const first = selected.first_observation || selectedObservations[0]?.acquisition_date || '';
+    const last = selected.latest_observation || selectedObservations[selectedObservations.length - 1]?.acquisition_date || '';
+    setFromDate((current) => (!current || !selectedObservations.some((item) => item.acquisition_date === current)) ? first : current);
+    setToDate((current) => (!current || !selectedObservations.some((item) => item.acquisition_date === current)) ? last : current);
+  }, [selected?.tile_id, selectedObservations]);
+
+  const counts = records.reduce<Record<string, number>>((result, item) => {
+    const trend = item.trend || 'stable';
+    result[trend] = (result[trend] || 0) + 1;
+    return result;
+  }, { stable: 0, steady_change: 0, accelerating: 0, decelerating: 0 });
+
+  const ActiveIcon = selected ? trendMeta[selected.trend || 'stable'].icon : Activity;
+  const chartData = (selected?.series || []).map((point) => ({ ...point, date: point.date_pair.after, value: point.velocity }));
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-text-primary">Velocity Signatures</h1>
-        <p className="text-xs text-text-secondary mt-1 font-mono">Track how each location changes over time with real temporal evidence</p>
-      </div>
-      {isError && <ErrorCard title="Velocity Feed Unavailable" message="Could not retrieve temporal signatures." onRetry={() => refetch()} />}
-      {isLoading ? <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">{Array.from({ length: 4 }).map((_, index) => <SkeletonCard key={index} lines={5} />)}</div> : tiles.length === 0 ? <EmptyState icon={Activity} title="No Multi-Temporal Tiles" description="At least three observations are required to display a velocity signature." /> : <>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">{tiles.map((tile) => <GlassPanel key={tile.tile_id} className="p-5 space-y-4"><div className="flex items-center justify-between"><button type="button" onClick={() => navigate(`/tiles/${tile.tile_id}`)} className="font-mono text-sm font-semibold text-text-primary hover:text-aurora-300">{tile.tile_id}</button><span className="text-[10px] font-mono text-text-muted">{tile.series.length} observations</span></div><TemporalSignatureChart series={tile.series} trend={tile.trend} /><div className="border-t border-white/[0.08] pt-3"><div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-text-muted"><Camera size={12} className="text-aurora-400" /> Temporal evolution</div><div className="mt-3 grid grid-cols-3 gap-2">{tile.series.slice(0, 3).map((point, idx) => <button key={`${tile.tile_id}-${idx}`} type="button" onClick={() => navigate(`/tiles/${tile.tile_id}`)} className="rounded-lg border border-white/[0.08] bg-white/[0.02] p-2 text-left hover:border-aurora-500/40 transition-colors"><div className="text-[9px] uppercase text-text-muted">{idx === 0 ? 'Before' : idx === 1 ? 'Change' : 'Current'}</div><div className="mt-1 text-[10px] text-aurora-300">{point.velocity.toFixed(5)}</div><div className="mt-1 text-[9px] text-text-secondary">{formatDate(point.date_pair.before)} → {formatDate(point.date_pair.after)}</div></button>)}</div></div></GlassPanel>)}</div>
-        <div className="flex justify-center pt-2">
-          <button type="button" onClick={() => setLimit((current) => current + 8)} className="rounded-full border border-aurora-500/40 bg-aurora-500/10 px-4 py-2 text-xs font-mono uppercase tracking-[0.2em] text-aurora-300 hover:bg-aurora-500/20">Load more</button>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.24em] text-aurora-300">
+            <span className="h-1.5 w-1.5 rounded-full bg-aurora-400 shadow-[0_0_10px_#00D4FF]" />
+            Temporal Intelligence Command Center
+          </div>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-text-primary">Change Velocity Monitor</h1>
+          <p className="mt-1 max-w-2xl text-xs font-mono text-text-secondary">How rapidly is observed optical activity changing across Sentinel-2 history?</p>
         </div>
-        <GlassPanel className="p-5 overflow-x-auto"><table className="w-full text-left text-xs font-mono"><thead className="text-[10px] uppercase tracking-wider text-text-muted border-b border-white/[0.08]"><tr><th className="pb-3">Tile</th><th className="pb-3">Trend</th><th className="pb-3">Date pair</th><th className="pb-3">Velocity</th><th className="pb-3">Source</th><th className="pb-3">Open</th></tr></thead><tbody>{tiles.flatMap((tile) => tile.series.map((point, index) => <tr key={`${tile.tile_id}-${index}`} className="border-b border-white/[0.05] text-text-secondary"><td className="py-3 text-text-primary">{tile.tile_id}</td><td className="py-3 uppercase">{tile.trend.replace('_', ' ')}</td><td className="py-3">{formatDate(point.date_pair.before)} <ArrowRight size={11} className="inline mx-1" /> {formatDate(point.date_pair.after)}</td><td className="py-3 text-aurora-300">{point.velocity.toFixed(5)}</td><td className="py-3">{point.source}</td><td className="py-3"><button type="button" title="Open tile" onClick={() => navigate(`/tiles/${tile.tile_id}`)} className="text-aurora-400"><ArrowRight size={14} /></button></td></tr>))}</tbody></table></GlassPanel>
-      </>}
+        <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-text-muted">Score / day | actual acquisition intervals</div>
+      </div>
+
+      {isError && <ErrorCard title="Temporal Engine Unavailable" message="Could not retrieve persisted change-score history." onRetry={() => refetch()} />}
+      {isLoading ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4"><SkeletonCard lines={2} /><SkeletonCard lines={2} /><SkeletonCard lines={2} /><SkeletonCard lines={2} /></div>
+      ) : (
+        <>
+          <GlassPanel className="p-5">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+              <label className="text-[10px] font-mono uppercase tracking-[0.18em] text-text-muted">Select tile
+                <select value={selected?.tile_id || ''} onChange={(event) => setSelectedTileId(event.target.value)} className="mt-2 w-full rounded-lg border border-white/[0.1] bg-space-950 px-3 py-2 text-xs text-text-primary">
+                  <option value="">No temporal signatures</option>
+                  {records.map((item) => <option key={item.tile_id} value={item.tile_id}>{item.tile_id}</option>)}
+                </select>
+              </label>
+              <div className="grid grid-cols-3 gap-6 text-right">
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-text-muted">First observation</div>
+                  <div className="mt-1 text-xs font-mono text-text-primary">{formatDate(selected?.first_observation)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-text-muted">Latest observation</div>
+                  <div className="mt-1 text-xs font-mono text-text-primary">{formatDate(selected?.latest_observation)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-text-muted">Observations</div>
+                  <div className="mt-1 text-xs font-mono text-aurora-300">{selected?.series?.length || 0}</div>
+                </div>
+              </div>
+            </div>
+          </GlassPanel>
+
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Metric label="Temporal Signatures" value={records.length} accent="text-aurora-300" />
+            <Metric label="Accelerating" value={counts.accelerating || 0} accent="text-amber-300" />
+            <Metric label="Steady Change" value={counts.steady_change || 0} accent="text-sky-300" />
+            <Metric label="Stable / Decelerating" value={(counts.stable || 0) + (counts.decelerating || 0)} accent="text-emerald-300" />
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.25fr_0.75fr]">
+            <GlassPanel className="relative overflow-hidden p-6">
+              <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(0,212,255,.08)_1px,transparent_1px),linear-gradient(90deg,rgba(0,212,255,.08)_1px,transparent_1px)] [background-size:32px_32px]" />
+              <div className="relative flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-text-muted">Highest temporal activity</div>
+                  <div className="mt-2 font-mono text-sm text-text-primary">{selected?.tile_id || 'NO VALID TEMPORAL DATA'}</div>
+                </div>
+                {selected && <Link to={`/tiles/${selected.tile_id}`} className="text-text-muted transition hover:text-aurora-300" aria-label="Open highest activity tile"><ArrowUpRight size={18} /></Link>}
+              </div>
+              <div className="relative mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div><div className="text-4xl font-mono font-semibold text-aurora-300">{selected?.latest_velocity?.toFixed(4) || '--'}</div><div className="mt-1 text-[10px] font-mono text-text-muted">SCORE / DAY</div></div>
+                <div><div className="text-lg font-mono text-text-primary">{selected?.acceleration?.toFixed(5) || '--'}</div><div className="mt-1 text-[10px] font-mono text-text-muted">ACCELERATION</div></div>
+                <div className="flex items-center gap-2"><ActiveIcon size={17} className={selected ? trendMeta[selected.trend || 'stable'].color : 'text-text-muted'} /><span className={`font-mono text-xs uppercase ${selected ? trendMeta[selected.trend || 'stable'].color : 'text-text-muted'}`}>{selected ? trendMeta[selected.trend || 'stable'].label : 'Unavailable'}</span></div>
+                <div><div className="text-lg font-mono text-text-primary">{selected?.series?.length || '--'}</div><div className="mt-1 text-[10px] font-mono text-text-muted">OBSERVATIONS</div></div>
+              </div>
+              <div className="relative mt-8 h-64">
+                {chartData.length < 1 ? <div className="flex h-full items-center justify-center text-xs font-mono text-text-muted">INSUFFICIENT TEMPORAL HISTORY</div> : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData}>
+                      <defs><linearGradient id="velocityFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#00D4FF" stopOpacity={0.35} /><stop offset="100%" stopColor="#00D4FF" stopOpacity={0} /></linearGradient></defs>
+                      <CartesianGrid stroke="#ffffff12" strokeDasharray="3 3" />
+                      <XAxis dataKey="date" tickFormatter={formatDate} stroke="#64748b" tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                      <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                      <Tooltip contentStyle={{ background: '#07111b', border: '1px solid #164e63', fontFamily: 'monospace', fontSize: 11 }} labelFormatter={formatDate} formatter={(value: number) => [value.toFixed(5), 'score/day']} />
+                      <Area type="monotone" dataKey="value" stroke="#00D4FF" strokeWidth={2} fill="url(#velocityFill)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </GlassPanel>
+
+            <GlassPanel className="p-6">
+              <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-[0.16em] text-text-secondary"><Activity size={14} className="text-aurora-400" /> Temporal Activity Matrix</div>
+              <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {records.slice(0, 48).map((item: VelocityTile) => (
+                  <Link key={item.tile_id} to={`/tiles/${item.tile_id}`} title={`${item.tile_id} - ${trendMeta[item.trend || 'stable'].label}`} className={`overflow-hidden border transition hover:scale-[1.02] ${item.tile_id === selected?.tile_id ? 'border-aurora-400 ring-1 ring-aurora-400/50' : 'border-white/10'} bg-space-950/60`}>
+                    <TileThumbnail src={selectedObservations.find((obs) => obs.tile_id === item.tile_id)?.thumbnail_url || undefined} alt={item.tile_id} aspectRatio="video" unavailableLabel="IMAGE UNAVAILABLE" />
+                    <div className="space-y-1 p-2">
+                      <div className="truncate text-[10px] font-mono text-text-primary">{item.tile_id}</div>
+                      <div className="flex justify-between text-[9px] font-mono">
+                        <span className="text-aurora-300">{item.latest_velocity?.toFixed(4) || '--'} / DAY</span>
+                        <span className={trendMeta[item.trend || 'stable'].color}>{trendMeta[item.trend || 'stable'].label}</span>
+                      </div>
+                      <div className="text-[9px] font-mono text-text-muted">{formatDate(item.first_observation)} → {formatDate(item.latest_observation)}</div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+              {records.length === 0 && <div className="mt-8 text-center text-xs font-mono text-text-muted">NO VALID OBSERVATIONS</div>}
+              <div className="mt-6 space-y-2 border-t border-white/[0.06] pt-4 text-[10px] font-mono uppercase tracking-wider text-text-muted">
+                <div className="flex justify-between"><span>Accelerating</span><span className="text-amber-300">{counts.accelerating || 0}</span></div>
+                <div className="flex justify-between"><span>Steady change</span><span className="text-sky-300">{counts.steady_change || 0}</span></div>
+                <div className="flex justify-between"><span>Stable</span><span className="text-slate-300">{counts.stable || 0}</span></div>
+                <div className="flex justify-between"><span>Decelerating</span><span className="text-rose-300">{counts.decelerating || 0}</span></div>
+              </div>
+            </GlassPanel>
+          </div>
+
+          <GlassPanel className="p-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">Temporal imagery / full history</div>
+                <div className="mt-1 text-[10px] font-mono text-text-muted">Select an observation to inspect its optical evidence.</div>
+              </div>
+              <Link to={selected ? `/tiles/${selected.tile_id}` : '/tiles'} className="text-[10px] font-mono uppercase text-aurora-300">Open tile detail -&gt;</Link>
+            </div>
+            <div className="mt-5 flex gap-3 overflow-x-auto pb-2">
+              {selectedObservations.map((item) => (
+                <Link key={item.observation_id} to={selected ? `/tiles/${selected.tile_id}/analysis?from_date=${item.acquisition_date}&to_date=${selected.latest_observation || item.acquisition_date}` : '#'} className="w-32 min-w-32 overflow-hidden rounded-lg border border-white/[0.08] bg-space-950/60 transition hover:border-aurora-400">
+                  <TileThumbnail src={item.thumbnail_url || undefined} alt={item.acquisition_date} aspectRatio="square" />
+                  <div className="space-y-1 p-2">
+                    <div className="text-[10px] font-mono text-text-primary">{formatDate(item.acquisition_date)}</div>
+                    <div className="text-[9px] font-mono text-text-muted">NDVI {item.ndvi_mean?.toFixed(3) || '--'}</div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </GlassPanel>
+
+          <GlassPanel className="p-5">
+            <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">Compare any two dates</div>
+            <div className="mt-4 grid grid-cols-1 items-end gap-3 md:grid-cols-[1fr_1fr_auto]">
+              <label className="text-[10px] font-mono uppercase text-text-muted">From date
+                <select value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="mt-2 w-full rounded-lg border border-white/[0.1] bg-space-950 px-3 py-2 text-xs text-text-primary">
+                  {selectedObservations.map((item) => <option key={item.observation_id} value={item.acquisition_date}>{formatDate(item.acquisition_date)}</option>)}
+                </select>
+              </label>
+              <label className="text-[10px] font-mono uppercase text-text-muted">To date
+                <select value={toDate} onChange={(event) => setToDate(event.target.value)} className="mt-2 w-full rounded-lg border border-white/[0.1] bg-space-950 px-3 py-2 text-xs text-text-primary">
+                  {selectedObservations.map((item) => <option key={item.observation_id} value={item.acquisition_date}>{formatDate(item.acquisition_date)}</option>)}
+                </select>
+              </label>
+              <Link to={selected && fromDate && toDate && fromDate < toDate ? `/tiles/${selected.tile_id}/analysis?from_date=${fromDate}&to_date=${toDate}` : '#'} className={`rounded-lg px-4 py-2.5 text-center text-xs font-mono font-semibold ${selected && fromDate && toDate && fromDate < toDate ? 'bg-aurora-400 text-space-950' : 'pointer-events-none bg-white/[0.08] text-text-muted'}`}>
+                View Analysis
+              </Link>
+            </div>
+          </GlassPanel>
+        </>
+      )}
     </div>
   );
 };

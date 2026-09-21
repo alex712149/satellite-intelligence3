@@ -470,7 +470,7 @@ export const SearchPage: React.FC = () => {
                 result={result}
                 index={idx}
                 onSelect={(selected) => { setComparisonResult(selected); setComparisonDifferenceUrl(null); }}
-                onAnalyze={(selected) => navigate(`/change/${selected.vector_id}`)}
+                onAnalyze={(selected) => navigate(`/tiles/${selected.tile_id}/analysis`)}
                 onOpenZoom={(src) => setZoomImage(src ?? null)}
               />
             </motion.div>
@@ -504,7 +504,7 @@ export const SearchPage: React.FC = () => {
                   {comparisonResult.analysis_available && comparisonResult.vector_id ? (
                     <button
                       type="button"
-                      onClick={() => navigate(`/change/${comparisonResult.vector_id}`)}
+                      onClick={() => navigate(`/tiles/${comparisonResult.tile_id}/analysis`)}
                       className="inline-flex items-center gap-1.5 rounded-md border border-aurora-500/30 bg-aurora-500/10 px-2.5 py-1.5 text-[10px] font-mono uppercase text-aurora-300 transition hover:bg-aurora-500/20"
                     >
                       View Analysis

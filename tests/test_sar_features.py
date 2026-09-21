@@ -2,12 +2,12 @@ import numpy as np
 import rasterio
 from types import SimpleNamespace
 from rasterio.transform import from_origin
-from app.geospatial.sar_features import (
+from backend.app.geospatial.sar_features import (
     compute_sar_features, find_matching_sar_pair, sar_change_score, SarFeatures,
     is_supported_sar_source,
 )
-from app.geospatial import catalog_db
-from app.cli import cmd_ingest_sar
+from backend.app.geospatial import catalog_db
+from backend.app.cli import cmd_ingest_sar
 
 
 def test_sar_features_convert_linear_values(tmp_path):

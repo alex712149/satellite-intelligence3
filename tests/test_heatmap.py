@@ -1,7 +1,7 @@
 import numpy as np
 import rasterio
 from rasterio.transform import from_origin
-from app.change.heatmap import spectral_diff_heatmap
+from backend.app.change.heatmap import spectral_diff_heatmap
 
 
 def test_spectral_heatmap_returns_public_relative_png(tmp_path, monkeypatch):

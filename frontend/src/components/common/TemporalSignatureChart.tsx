@@ -1,6 +1,7 @@
 import React from 'react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { VelocityPoint } from '@/types/api';
+import { formatDate } from '@/lib/utils';
 
 interface TemporalSignatureChartProps {
   series?: VelocityPoint[];
@@ -18,7 +19,7 @@ const trendStyles: Record<string, string> = {
 
 export const TemporalSignatureChart: React.FC<TemporalSignatureChartProps> = ({ series, values, trend, className }) => {
   const data = series
-    ? series.map((point, index) => ({ ...point, label: `${index + 1}` }))
+    ? series.map((point) => ({ ...point, label: point.date_pair.after }))
     : (values || []).map((velocity, index) => ({ velocity, label: `${index + 1}` }));
   const label = (trend || 'stable').replace('_', ' ').toUpperCase();
 
@@ -33,9 +34,12 @@ export const TemporalSignatureChart: React.FC<TemporalSignatureChartProps> = ({ 
       ) : (
         <ResponsiveContainer width="100%" height="85%">
           <LineChart data={data} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
-            <XAxis dataKey="label" stroke="#484F58" tick={{ fill: '#8B949E', fontSize: 10 }} tickLine={false} />
+            <XAxis dataKey="label" tickFormatter={formatDate} stroke="#484F58" tick={{ fill: '#8B949E', fontSize: 10 }} tickLine={false} />
             <YAxis stroke="#484F58" tick={{ fill: '#8B949E', fontSize: 10 }} tickLine={false} />
-            <Tooltip content={({ active, payload }) => active && payload?.length ? <div className="rounded-lg bg-space-950/90 border border-white/[0.1] p-2 font-mono text-[10px]">Velocity: {Number(payload[0].value).toFixed(5)}</div> : null} />
+            <Tooltip content={({ active, payload }) => {
+              const point = payload?.[0]?.payload as VelocityPoint | undefined;
+              return active && point ? <div className="rounded-lg bg-space-950/90 border border-white/[0.1] p-2 font-mono text-[10px]">{formatDate(point.date_pair.before)} → {formatDate(point.date_pair.after)}<br />Velocity: {Number(point.velocity).toFixed(5)} / day<br />Source: {point.source}</div> : null;
+            }} />
             <Line type="monotone" dataKey="velocity" stroke="#00D4FF" strokeWidth={2} dot={{ r: 3, fill: '#00D4FF' }} />
           </LineChart>
         </ResponsiveContainer>

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from app.change.temporal_signature import (
+from backend.app.change.temporal_signature import (
     _effective_score,
     compute_velocity,
     select_temporal_keyframes,
@@ -55,7 +55,7 @@ def test_velocity_uses_uneven_spacing_and_reports_trend(monkeypatch):
     ]
 
     monkeypatch.setattr(
-        "app.change.temporal_signature.analyze_tile_timeline",
+        "backend.app.change.temporal_signature.analyze_tile_timeline",
         lambda tile_id, threshold=0.0: candidate_pairs,
     )
 
@@ -78,10 +78,10 @@ def test_temporal_profile_uses_first_to_last_comparison(monkeypatch):
         {"vector_id": 3, "acquisition_date": "2025-03-01"},
     ]
     long_candidate = SimpleNamespace(combined_score=0.35, sar_only=False, fused_score=None)
-    monkeypatch.setattr("app.change.temporal_signature.analyze_tile_timeline", lambda tile_id, threshold=0.0: candidates)
-    monkeypatch.setattr("app.change.temporal_signature.analyze_tile_pair", lambda first, last: long_candidate)
-    monkeypatch.setattr("app.change.temporal_signature.VectorIndex.has_vector", lambda self, vector_id: True)
-    monkeypatch.setattr("app.change.temporal_signature.db.get_tile_history", lambda tile_id: history)
+    monkeypatch.setattr("backend.app.change.temporal_signature.analyze_tile_timeline", lambda tile_id, threshold=0.0: candidates)
+    monkeypatch.setattr("backend.app.change.temporal_signature.analyze_tile_pair", lambda first, last: long_candidate)
+    monkeypatch.setattr("backend.app.change.temporal_signature.VectorIndex.has_vector", lambda self, vector_id: True)
+    monkeypatch.setattr("backend.app.change.temporal_signature.db.get_tile_history", lambda tile_id: history)
 
     profile = temporal_profile("T123")
 
@@ -92,9 +92,9 @@ def test_temporal_profile_uses_first_to_last_comparison(monkeypatch):
 
 def test_temporal_profile_handles_two_rows_and_missing_vectors(monkeypatch):
     candidate = SimpleNamespace(date_before="2025-01-01", date_after="2025-02-01", combined_score=0.4, sar_only=False, fused_score=None)
-    monkeypatch.setattr("app.change.temporal_signature.analyze_tile_timeline", lambda tile_id, threshold=0.0: [candidate])
-    monkeypatch.setattr("app.change.temporal_signature.db.get_tile_history", lambda tile_id: [{"vector_id": 1}, {"vector_id": 2}])
-    monkeypatch.setattr("app.change.temporal_signature.VectorIndex.has_vector", lambda self, vector_id: False)
+    monkeypatch.setattr("backend.app.change.temporal_signature.analyze_tile_timeline", lambda tile_id, threshold=0.0: [candidate])
+    monkeypatch.setattr("backend.app.change.temporal_signature.db.get_tile_history", lambda tile_id: [{"vector_id": 1}, {"vector_id": 2}])
+    monkeypatch.setattr("backend.app.change.temporal_signature.VectorIndex.has_vector", lambda self, vector_id: False)
 
     profile = temporal_profile("T123")
 

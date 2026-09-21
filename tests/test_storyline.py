@@ -1,5 +1,5 @@
-from app.change.storyline import classify_stage
-from app.config import (
+from backend.app.change.storyline import classify_stage
+from backend.app.config import (
     STORYLINE_ACTIVE_THRESHOLD,
     STORYLINE_MAJOR_THRESHOLD,
     STORYLINE_ONSET_THRESHOLD,
