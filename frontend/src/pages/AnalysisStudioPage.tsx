@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Activity, ArrowLeft, Layers, ScanSearch } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { useTileObservations, useTemporalAnalysis } from '@/hooks/useTiles';
+import { useTileObservations, useTemporalAnalysis, useAnalysisBrief } from '@/hooks/useTiles';
 import { GlassPanel } from '@/components/common/GlassPanel';
 import { BeforeAfterCompare } from '@/components/common/BeforeAfterCompare';
 import { TileThumbnail } from '@/components/common/TileThumbnail';
@@ -62,6 +62,7 @@ export const AnalysisStudioPage: React.FC = () => {
 
   const validPair = Boolean(fromDate && toDate && fromDate < toDate);
   const { data: analysis } = useTemporalAnalysis(tileId, submitted && validPair ? fromDate : undefined, submitted && validPair ? toDate : undefined);
+  const { data: brief } = useAnalysisBrief(tileId, fromDate, toDate, submitted && validPair && Boolean(analysis));
 
   useEffect(() => {
     if (imageObservations.length < 2) return;
@@ -131,7 +132,7 @@ export const AnalysisStudioPage: React.FC = () => {
             <>
               <GlassPanel className="p-5">
                 <div className="mb-4 flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-text-secondary"><Layers size={14} className="text-aurora-400" /> Before / After Analysis</div>
-                <BeforeAfterCompare beforeUrl={analysis.before?.image_url ?? fromObservation?.thumbnail_url ?? null} afterUrl={analysis.after?.image_url ?? toObservation?.thumbnail_url ?? null} beforeDate={analysis.before?.date ?? fromDate} afterDate={analysis.after?.date ?? toDate} />
+                <BeforeAfterCompare beforeUrl={analysis.before?.image_url ?? fromObservation?.thumbnail_url ?? null} afterUrl={analysis.after?.image_url ?? toObservation?.thumbnail_url ?? null} differenceHeatmapUrl={analysis.spatial_layers?.difference_heatmap_url} backendMaskUrl={analysis.spatial_layers?.backend_difference_mask_url} beforeDate={analysis.before?.date ?? fromDate} afterDate={analysis.after?.date ?? toDate} />
               </GlassPanel>
 
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -164,6 +165,17 @@ export const AnalysisStudioPage: React.FC = () => {
                 </div>
               </GlassPanel>
 
+              <GlassPanel className="p-5">
+                <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">What changed?</div>
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {['NDVI', 'NDWI', 'NDBI', 'NDMI', 'NBR', 'MNDWI', 'VV', 'VH', 'VV-VH', 'SAR CHANGE', 'VELOCITY', 'ACCELERATION', 'FUSED CHANGE'].map((label) => {
+                    const key = label.toLowerCase().replace('-', '_').replace(' ', '_');
+                    const value = (analysis.metrics as unknown as Record<string, unknown>)[key];
+                    return <div key={label} className="flex justify-between border-b border-white/[0.06] py-2 text-[11px] font-mono"><span className="text-text-muted">{label}</span><span className="text-text-primary">{typeof value === 'number' ? value.toFixed(3) : 'UNAVAILABLE'}</span></div>;
+                  })}
+                </div>
+              </GlassPanel>
+
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <SignalChart title="Temporal Change Velocity" data={velocityChart} color="#00D4FF" fromDate={fromDate} toDate={toDate} activeDate={activeDate} onHover={setActiveDate} unit="score/day" />
                 {analysis.optical && (['ndvi', 'ndwi'] as const).map((key) => {
@@ -175,7 +187,15 @@ export const AnalysisStudioPage: React.FC = () => {
                     <SignalChart key={key} title={key.toUpperCase() + ' Temporal Signal'} data={points} color={key === 'ndvi' ? '#34D399' : '#60A5FA'} fromDate={fromDate} toDate={toDate} activeDate={activeDate} onHover={setActiveDate} unit={key.toUpperCase()} />
                   );
                 })}
+                {analysis.sar && (['vv_mean', 'vh_mean', 'vv_minus_vh'] as const).map((key) => {
+                  const points = (analysis.sar?.[key] || []).map((value, index) => ({ date: analysis.sar?.dates[index] || '', value: value ?? null })).filter((point) => point.date >= fromDate && point.date <= toDate);
+                  return <SignalChart key={key} title={`Sentinel-1 ${key.replace('_', ' ').toUpperCase()}`} data={points} color={key === 'vv_mean' ? '#FBBF24' : '#FB7185'} fromDate={fromDate} toDate={toDate} activeDate={activeDate} onHover={setActiveDate} unit="dB" />;
+                })}
               </div>
+
+              {analysis.sar_evidence?.available && analysis.sar_evidence.after && <GlassPanel className="p-5"><div className="text-xs font-mono uppercase tracking-wider text-text-secondary">Sentinel-1 evidence</div><div className="mt-1 text-[10px] font-mono text-text-muted">ACQUIRED {analysis.sar_evidence.after.acquisition_datetime || 'DATE UNAVAILABLE'} | ONE OBSERVATION / FOUR PRODUCTS</div><div className="mt-4 grid grid-cols-2 gap-3">{Object.entries(analysis.sar_evidence.after.visuals).map(([product, url]) => <TileThumbnail key={product} src={url || undefined} alt={product} aspectRatio="square" />)}</div></GlassPanel>}
+
+              <GlassPanel className="p-5"><div className="text-xs font-mono uppercase tracking-wider text-text-secondary">Analyst remark</div><div className="mt-2 text-[10px] font-mono uppercase text-aurora-300">{brief?.available ? 'QWEN / OLLAMA ONLINE' : 'QWEN / OLLAMA UNAVAILABLE - DETERMINISTIC SUMMARY'}</div><p className="mt-3 max-w-3xl text-sm leading-6 text-text-secondary">{brief?.brief || 'Grounded remark will be available after analysis.'}</p></GlassPanel>
             </>
           )}
 

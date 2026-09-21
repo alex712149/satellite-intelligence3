@@ -42,6 +42,26 @@ export interface AOI {
   last_activity: string | null;
 }
 
+export interface AOITileSummary {
+  tile_id: string;
+  aoi_id: string;
+  aoi_name: string;
+  first_observation: string | null;
+  latest_observation: string | null;
+  observation_count: number;
+  thumbnail_url: string | null;
+  latest_velocity: number | null;
+  acceleration: number | null;
+  trend: string | null;
+}
+
+export interface AOITilesResponse {
+  aoi_id: string;
+  aoi_name: string;
+  tile_count: number;
+  tiles: AOITileSummary[];
+}
+
 export interface TimelineEntry {
   date: string;
   scene_id: string;
@@ -382,19 +402,24 @@ export interface AnalysisObservation {
 
 export interface OpticalSeries {
   dates: string[];
-  ndvi: number[];
-  ndwi: number[];
-  cloud_fraction: number[];
+  ndvi: Array<number | null>;
+  ndwi: Array<number | null>;
+  cloud_fraction: Array<number | null>;
+  [key: string]: string[] | Array<number | null>;
 }
 
 export interface SarSeries {
   dates: string[];
+  timestamps?: Array<string | null>;
   vv_db?: number[];
   vh_db?: number[];
   vv_mean?: number[];
   vh_mean?: number[];
   valid_fraction?: number[];
   vv_minus_vh_db?: number[];
+  vv_minus_vh?: Array<number | null>;
+  vv_std?: Array<number | null>;
+  vh_std?: Array<number | null>;
 }
 
 export interface FusionSeries {
@@ -415,6 +440,29 @@ export interface AnalysisMetrics {
   velocity: number | null;
   acceleration: number | null;
   drift: number | null;
+  overall_change_score?: number | null;
+  overall_velocity?: number | null;
+  sar_change?: number | null;
+  sar_vv_delta?: number | null;
+  sar_vh_delta?: number | null;
+}
+
+export interface SpatialLayers {
+  difference_heatmap_url: string | null;
+  backend_difference_mask_url: string | null;
+  ndvi_delta_url: string | null;
+  ndwi_delta_url: string | null;
+  ndbi_delta_url: string | null;
+  ndmi_delta_url: string | null;
+  nbr_delta_url: string | null;
+  mndwi_delta_url: string | null;
+  sar_delta_url: string | null;
+}
+
+export interface AnalysisBrief {
+  available: boolean;
+  brief: string;
+  facts: Record<string, unknown>;
 }
 
 export interface TemporalAnalysis {
@@ -459,6 +507,7 @@ export interface TemporalAnalysis {
     before: SarEvidence | null;
     after: SarEvidence | null;
   };
+  spatial_layers?: SpatialLayers;
 }
 
 export interface SarEvidence {

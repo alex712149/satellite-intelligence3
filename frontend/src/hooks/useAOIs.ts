@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { AOI, TimelineEntry, Mosaic } from '@/types/api';
+import type { AOI, AOITilesResponse, TimelineEntry, Mosaic } from '@/types/api';
 
 export function useAOIs() {
   return useQuery<AOI[]>({
@@ -14,6 +14,15 @@ export function useAOITimeline(aoiId: string | undefined) {
   return useQuery<TimelineEntry[]>({
     queryKey: ['aoi-timeline', aoiId],
     queryFn: () => api.get<TimelineEntry[]>(`/aois/${aoiId}/timeline`),
+    enabled: Boolean(aoiId),
+    staleTime: 30000,
+  });
+}
+
+export function useAOITiles(aoiId: string | undefined) {
+  return useQuery<AOITilesResponse>({
+    queryKey: ['aoi-tiles', aoiId],
+    queryFn: () => api.get<AOITilesResponse>(`/aois/${aoiId}/tiles`),
     enabled: Boolean(aoiId),
     staleTime: 30000,
   });

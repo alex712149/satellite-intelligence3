@@ -7,6 +7,8 @@ interface BeforeAfterCompareProps {
   beforeUrl?: string | null;
   afterUrl?: string | null;
   differenceUrl?: string | null;
+  differenceHeatmapUrl?: string | null;
+  backendMaskUrl?: string | null;
   beforeDate?: string;
   afterDate?: string;
   className?: string;
@@ -18,7 +20,8 @@ interface BeforeAfterCompareProps {
 export const BeforeAfterCompare: React.FC<BeforeAfterCompareProps> = ({
   beforeUrl,
   afterUrl,
-  differenceUrl,
+  differenceHeatmapUrl,
+  backendMaskUrl,
   beforeDate,
   afterDate,
   className,
@@ -30,9 +33,9 @@ export const BeforeAfterCompare: React.FC<BeforeAfterCompareProps> = ({
   const [sliderPos, setSliderPos] = useState(50);
   const [visualMode, setVisualMode] = useState<'true-color' | 'difference'>('true-color');
   const [heatmapOverlay, setHeatmapOverlay] = useState(false);
-  const [backendMask, setBackendMask] = useState(Boolean(differenceUrl));
-  const showDifference = visualMode === 'difference' && differenceUrl;
-  const comparisonUrl = showDifference ? differenceUrl : afterUrl;
+  const [backendMask, setBackendMask] = useState(false);
+  const showDifference = visualMode === 'difference' && differenceHeatmapUrl;
+  const comparisonUrl = showDifference ? differenceHeatmapUrl : afterUrl;
 
   return (
     <div className={cn('space-y-3', fullBleed && 'h-full flex flex-col', className)}>
@@ -46,10 +49,10 @@ export const BeforeAfterCompare: React.FC<BeforeAfterCompareProps> = ({
           <button type="button" onClick={() => setSliderPos(50)} className="compare-tool"><RotateCcw size={12} />50/50 reset</button>
           <button type="button" onClick={() => setSliderPos(50)} className="compare-tool"><Expand size={12} />Fit comparison</button>
           <button type="button" onClick={() => setVisualMode('true-color')} className={cn('compare-tool', visualMode === 'true-color' && 'compare-tool-active')}><Sparkles size={12} />True color</button>
-          <button type="button" disabled={!differenceUrl} onClick={() => setVisualMode('difference')} className={cn('compare-tool', visualMode === 'difference' && 'compare-tool-active')}><Flame size={12} />Difference heatmap</button>
-          <button type="button" disabled={!differenceUrl} onClick={() => setHeatmapOverlay(!heatmapOverlay)} className={cn('compare-tool', heatmapOverlay && 'compare-tool-active')}><Check size={12} />Heatmap {heatmapOverlay ? 'on' : 'off'}</button>
+          <button type="button" disabled={!differenceHeatmapUrl} onClick={() => setVisualMode('difference')} className={cn('compare-tool', visualMode === 'difference' && 'compare-tool-active')}><Flame size={12} />Difference heatmap</button>
+          <button type="button" disabled={!differenceHeatmapUrl} onClick={() => setHeatmapOverlay(!heatmapOverlay)} className={cn('compare-tool', heatmapOverlay && 'compare-tool-active')}><Check size={12} />Heatmap {heatmapOverlay ? 'on' : 'off'}</button>
           {onFullscreen && <button type="button" onClick={onFullscreen} className="compare-tool"><Maximize2 size={12} />Fullscreen comparison</button>}
-          <button type="button" disabled={!differenceUrl} onClick={() => setBackendMask(!backendMask)} className={cn('compare-tool', backendMask && 'compare-tool-active')}><Check size={12} />Backend difference mask</button>
+          <button type="button" disabled={!backendMaskUrl} onClick={() => setBackendMask(!backendMask)} className={cn('compare-tool', backendMask && 'compare-tool-active')}><Check size={12} />Backend difference mask</button>
           <button type="button" onClick={() => setMode(mode === 'side-by-side' ? 'slider' : 'side-by-side')} className="compare-tool"><Sliders size={12} />{mode === 'side-by-side' ? 'Slider Mode' : 'Side-by-Side'}</button>
         </div>
       </div>
@@ -69,14 +72,14 @@ export const BeforeAfterCompare: React.FC<BeforeAfterCompareProps> = ({
             <TileThumbnail src={beforeUrl} alt="Before Tile" aspectRatio={fullBleed ? 'auto' : 'square'} className="h-full w-full" zoomOnHover={false} unavailable={!beforeUrl} />
             <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-space-950/80 font-mono text-[10px] text-text-secondary border border-white/[0.1]">BEFORE</div>
           </div>
-          {heatmapOverlay && differenceUrl && <div className="absolute inset-0 pointer-events-none opacity-40 mix-blend-screen"><TileThumbnail src={differenceUrl} alt="Heatmap overlay" aspectRatio={fullBleed ? 'auto' : 'square'} className="h-full w-full" zoomOnHover={false} /></div>}
-          {backendMask && differenceUrl && <div className="absolute inset-0 pointer-events-none opacity-25 mix-blend-screen"><TileThumbnail src={differenceUrl} alt="Backend difference mask" aspectRatio={fullBleed ? 'auto' : 'square'} className="h-full w-full" zoomOnHover={false} /></div>}
+          {heatmapOverlay && differenceHeatmapUrl && <div className="absolute inset-0 pointer-events-none opacity-40 mix-blend-screen"><TileThumbnail src={differenceHeatmapUrl} alt="Heatmap overlay" aspectRatio={fullBleed ? 'auto' : 'square'} className="h-full w-full" zoomOnHover={false} /></div>}
+          {backendMask && backendMaskUrl && <div className="absolute inset-0 pointer-events-none opacity-25 mix-blend-screen"><TileThumbnail src={backendMaskUrl} alt="Backend difference mask" aspectRatio={fullBleed ? 'auto' : 'square'} className="h-full w-full" zoomOnHover={false} /></div>}
           <div className="absolute top-0 bottom-0 w-0.5 bg-aurora-400 shadow-[0_0_10px_#00D4FF] cursor-ew-resize flex items-center justify-center pointer-events-none" style={{ left: `${sliderPos}%` }}><div className="w-5 h-5 rounded-full bg-space-900 border border-aurora-400 shadow-glow-cyan flex items-center justify-center text-aurora-400"><Sliders size={10} /></div></div>
           <input type="range" min={0} max={100} value={sliderPos} onChange={(event) => setSliderPos(Number(event.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-10" />
         </div>
       )}
 
-      {differenceUrl && !onFullscreen && <div className="pt-2 border-t border-white/[0.06]"><div className="flex items-center justify-between text-[10px] font-mono text-rose-400 mb-1.5"><span>SPECTRAL DELTA DIFFERENCE MAP</span><span>Δ SIGNAL</span></div><TileThumbnail src={differenceUrl} alt="Difference Map" aspectRatio="wide" unavailable={!differenceUrl} /></div>}
+      {differenceHeatmapUrl && !onFullscreen && <div className="pt-2 border-t border-white/[0.06]"><div className="flex items-center justify-between text-[10px] font-mono text-rose-400 mb-1.5"><span>SPECTRAL DELTA DIFFERENCE MAP</span><span>Δ SIGNAL</span></div><TileThumbnail src={differenceHeatmapUrl} alt="Difference Map" aspectRatio="wide" unavailable={!differenceHeatmapUrl} /></div>}
     </div>
   );
 };

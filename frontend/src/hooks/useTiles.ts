@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { TileDetail, SearchResult, TileObservation, TileObservationsResponse, TemporalAnalysis } from '@/types/api';
+import type { TileDetail, SearchResult, TileObservation, TileObservationsResponse, TemporalAnalysis, TemporalSignature, AnalysisBrief } from '@/types/api';
 
 export function useTile(tileId: string | undefined) {
   return useQuery<TileDetail>({
@@ -25,6 +25,24 @@ export function useTemporalAnalysis(tileId: string | undefined, fromDate?: strin
     queryKey: ['temporal-analysis', tileId, fromDate ?? 'all', toDate ?? 'all'],
     queryFn: ({ signal }) => api.get<TemporalAnalysis>(`/tiles/${tileId}/analysis`, { from_date: fromDate, to_date: toDate }, signal),
     enabled: Boolean(enabled && tileId && fromDate && toDate && fromDate < toDate),
+    staleTime: 30000,
+  });
+}
+
+export function useTemporalSignature(tileId: string | undefined) {
+  return useQuery<TemporalSignature>({
+    queryKey: ['temporal-signature', tileId],
+    queryFn: () => api.get<TemporalSignature>(`/tiles/${tileId}/temporal-signature`),
+    enabled: Boolean(tileId),
+    staleTime: 30000,
+  });
+}
+
+export function useAnalysisBrief(tileId: string | undefined, fromDate?: string, toDate?: string, enabled = false) {
+  return useQuery<AnalysisBrief>({
+    queryKey: ['analysis-brief', tileId, fromDate, toDate],
+    queryFn: () => api.post<AnalysisBrief>(`/tiles/${tileId}/analysis/brief`, { before_date: fromDate, after_date: toDate }),
+    enabled: Boolean(enabled && tileId && fromDate && toDate),
     staleTime: 30000,
   });
 }

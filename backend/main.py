@@ -19,9 +19,10 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from backend.app.config import OLLAMA_HOST, OLLAMA_MODEL, TILE_SIZE_PX
+from backend.app.config import DATA_DIR, OLLAMA_HOST, OLLAMA_MODEL, TILE_SIZE_PX
 from backend.app.change import storyline, temporal_signature
 from backend.app.change import adaptive, brief, heatmap, sar
+from backend.app.change.detector import analyze_tile_pair
 from backend.app.discovery import clustering
 from backend.app.geospatial import catalog_db as db
 from backend.app.index import search as index_search
@@ -29,7 +30,7 @@ from backend.app.index.vector_index import VectorIndex
 from backend.app.pipeline import onboard_aoi as onboarding
 from backend.app.review import queue as review_queue
 from backend.app.geospatial.rendering import has_valid_multispectral_data
-from backend.app.geospatial.sar_features import find_matching_sar_pair
+from backend.app.geospatial.sar_features import find_matching_sar_observation, find_matching_sar_pair
 from backend.app.geospatial.sar_rendering import render_sar_visuals
 from .rendering import difference_image, mosaic_thumbnail, tile_thumbnail
 
@@ -522,26 +523,7 @@ def _resolve_query_dates(tile_id: str, from_date: str | None, to_date: str | Non
 
 
 def _sar_observation_for_date(tile_id: str, target_date: str):
-	"""Return the nearest registered SAR raster within the optical match window."""
-	try:
-		target = datetime.fromisoformat(target_date).date()
-	except ValueError:
-		return None
-	best = None
-	with db.get_conn() as conn:
-		rows = conn.execute("SELECT * FROM sar_tiles WHERE tile_id=? ORDER BY acquisition_datetime, period_start", (tile_id,)).fetchall()
-	for row in rows:
-		candidate_value = row["acquisition_datetime"] or row["period_start"] or row["period_end"]
-		if not candidate_value:
-			continue
-		try:
-			candidate = datetime.fromisoformat(str(candidate_value).replace("Z", "+00:00")).date()
-		except ValueError:
-			continue
-		distance = abs((candidate - target).days)
-		if distance <= 7 and (best is None or distance < best[0]):
-			best = (distance, row)
-	return best[1] if best else None
+	return find_matching_sar_observation(tile_id, target_date)
 
 
 def _sar_public(row, request: Request) -> dict | None:
@@ -728,6 +710,30 @@ def aois(request: Request):
 					   "start_date": row["first_date"], "end_date": row["last_date"], "scene_count": row["scene_count"], "tile_count": row["tile_count"],
 					   "mosaic_thumbnail_url": thumb, "last_activity": row["last_candidate"] or row["last_date"]})
 	return result
+
+
+@app.get("/aois/{aoi_id}/tiles")
+def aoi_tiles(aoi_id: str, request: Request):
+	aoi = aoi_row(aoi_id)
+	with db.get_conn() as conn:
+		rows = conn.execute(
+			"SELECT tile_id, MIN(acquisition_date) first_observation, MAX(acquisition_date) latest_observation, "
+			"COUNT(*) observation_count FROM tiles WHERE aoi_id=? GROUP BY tile_id ORDER BY tile_id",
+			(aoi["aoi_id"],),
+		).fetchall()
+	items = []
+	for row in rows:
+		history = db.get_tile_history(row["tile_id"])
+		latest = history[-1] if history else None
+		velocity = temporal_signature.compute_velocity(row["tile_id"])
+		thumbnail = _observation_thumbnail_url(request, latest) if latest else None
+		items.append({
+			"tile_id": row["tile_id"], "aoi_id": aoi_id, "aoi_name": aoi["name"],
+			"first_observation": row["first_observation"], "latest_observation": row["latest_observation"],
+			"observation_count": row["observation_count"], "thumbnail_url": thumbnail,
+			"latest_velocity": velocity.latest_velocity, "acceleration": velocity.acceleration, "trend": velocity.trend,
+		})
+	return {"aoi_id": aoi_id, "aoi_name": aoi["name"], "tile_count": len(items), "tiles": items}
 
 
 @app.patch("/aois/{aoi_id}")
@@ -928,20 +934,53 @@ def tile_analysis(tile_id: str, request: Request, before: str | None = Query(Non
 		"acceleration": velocity.acceleration,
 		"drift": (after_ndvi - before_ndvi) if before_ndvi is not None and after_ndvi is not None else None,
 	}
+	sar_pair = find_matching_sar_pair(before_row, after_row)
+	if sar_pair:
+		metrics["sar_change"] = sar.sar_change_score(*sar_pair)
+		metrics["sar_vv_delta"] = (sar_pair[1].vv_mean_db - sar_pair[0].vv_mean_db) if sar_pair[0].vv_mean_db is not None and sar_pair[1].vv_mean_db is not None else None
+		metrics["sar_vh_delta"] = (sar_pair[1].vh_mean_db - sar_pair[0].vh_mean_db) if sar_pair[0].vh_mean_db is not None and sar_pair[1].vh_mean_db is not None else None
+	else:
+		metrics["sar_change"] = metrics["sar_vv_delta"] = metrics["sar_vh_delta"] = None
+	try:
+		overall_pair = analyze_tile_pair(history[0], history[-1], sar_pair=find_matching_sar_pair(history[0], history[-1]))
+		overall_score = overall_pair.combined_score
+	except (OSError, ValueError, IndexError, KeyError):
+		overall_score = None
+	overall_days = max((datetime.fromisoformat(history[-1]["acquisition_date"]) - datetime.fromisoformat(history[0]["acquisition_date"])).days, 1)
+	metrics["overall_change_score"] = overall_score
+	metrics["overall_velocity"] = overall_score / overall_days if overall_score is not None else None
 	optical = {
 		"dates": [row["acquisition_date"] for row in filtered_history],
 		"ndvi": [row["ndvi_mean"] for row in filtered_history],
 		"ndwi": [row["ndwi_mean"] for row in filtered_history],
 		"cloud_fraction": [row["cloud_fraction"] for row in filtered_history],
 	}
-	sar_rows = db.list_sar_observations(tile_id)
-	selected_sar = [dict(row) for row in sar_rows if (resolved_from is None or row["acquisition_date"] >= resolved_from) and (resolved_to is None or row["acquisition_date"] <= resolved_to)]
+	with db.get_conn() as conn:
+		sar_rows = conn.execute("SELECT * FROM sar_tiles WHERE tile_id=? ORDER BY acquisition_datetime, period_start", (tile_id,)).fetchall()
+	selected_sar = [
+		dict(row) for row in sar_rows
+		if (resolved_from is None or (row["acquisition_datetime"] or row["period_start"] or row["period_end"] or "")[:10] >= resolved_from)
+		and (resolved_to is None or (row["acquisition_datetime"] or row["period_start"] or row["period_end"] or "")[:10] <= resolved_to)
+	]
 	sar_values = {
-		"dates": [row["acquisition_date"] for row in selected_sar],
-		"vv_mean": [row["vv_mean"] for row in selected_sar],
-		"vh_mean": [row["vh_mean"] for row in selected_sar],
-		"valid_fraction": [row["valid_fraction"] for row in selected_sar],
+		"dates": [(row["acquisition_datetime"] or row["period_start"] or row["period_end"] or "")[:10] for row in selected_sar],
+		"timestamps": [row["acquisition_datetime"] for row in selected_sar],
+		"vv_mean": [row["vv_mean_db"] for row in selected_sar],
+		"vh_mean": [row["vh_mean_db"] for row in selected_sar],
+		"vv_minus_vh": [row["vv_minus_vh_db"] for row in selected_sar],
+		"vv_std": [row["vv_std_db"] for row in selected_sar],
+		"vh_std": [row["vh_std_db"] for row in selected_sar],
+		"valid_fraction": [row["valid_pixels"] for row in selected_sar],
 	}
+	spatial_layers = {"difference_heatmap_url": None, "backend_difference_mask_url": None, "ndvi_delta_url": None, "ndwi_delta_url": None, "ndbi_delta_url": None, "ndmi_delta_url": None, "nbr_delta_url": None, "mndwi_delta_url": None, "sar_delta_url": None}
+	if source_available(before_row["tile_path"]) and source_available(after_row["tile_path"]):
+		mask_path, _, _, _, _ = difference_image(before_row["tile_path"], after_row["tile_path"], GENERATED_DIR / "differences", f"{tile_id}-{before_row['vector_id']}-{after_row['vector_id']}")
+		spatial_layers["backend_difference_mask_url"] = public_url(request, mask_path)
+		heatmap_path = heatmap.spectral_diff_heatmap(before_row["tile_path"], after_row["tile_path"])
+		if heatmap_path:
+			spatial_layers["difference_heatmap_url"] = public_url(request, DATA_DIR.parent / heatmap_path)
+	if metrics["sar_change"] is not None:
+		spatial_layers["sar_delta_url"] = None
 	response = {
 		"tile_id": tile_id,
 		"aoi_id": history[0]["aoi_id"],
@@ -965,6 +1004,7 @@ def tile_analysis(tile_id: str, request: Request, before: str | None = Query(Non
 		"range_label": f"{resolved_from} → {resolved_to}",
 		"sar_observations": selected_sar,
 		"series": selected_series,
+		"spatial_layers": spatial_layers,
 	}
 	response["indices"] = [
 		{"name": "NDVI", "before": before_row["ndvi_mean"], "after": after_row["ndvi_mean"], "delta": metrics["ndvi_delta"], "available": before_row["ndvi_mean"] is not None and after_row["ndvi_mean"] is not None},
@@ -1134,6 +1174,37 @@ def system_llm_status():
 		available = False
 		model_pulled = False
 	return {"available": available, "model_pulled": model_pulled}
+
+
+@app.post("/tiles/{tile_id}/analysis/brief")
+def tile_analysis_brief(tile_id: str, request: Request, payload: dict):
+	from backend.app.change.llm_brief import generate_llm_brief
+	before_date = payload.get("before_date")
+	after_date = payload.get("after_date")
+	analysis = tile_analysis(tile_id, request, from_date=before_date, to_date=after_date)
+	metrics = analysis["metrics"]
+	facts = {
+		"tile_id": tile_id, "aoi_id": analysis.get("aoi_id"),
+		"from_date": analysis["range"]["from"], "to_date": analysis["range"]["to"],
+		"separation_days": analysis["range"]["days"], "change_score": metrics.get("overall_change_score"),
+		"velocity": metrics.get("velocity"), "acceleration": metrics.get("acceleration"),
+		"ndvi_delta": metrics.get("ndvi_delta"), "ndwi_delta": metrics.get("ndwi_delta"),
+		"sar_change": metrics.get("sar_change"), "sar_vv_delta": metrics.get("sar_vv_delta"),
+		"sar_vh_delta": metrics.get("sar_vh_delta"), "sar_available": analysis["quality"].get("sar_available"),
+		"observations_used": analysis["quality"].get("observations_used"), "modality": "optical and SAR temporal evidence" if analysis["quality"].get("sar_available") else "optical temporal evidence",
+	}
+	llm_text = generate_llm_brief(facts)
+	brief_text = llm_text
+	if not brief_text:
+		parts = [f"Observed change was measured between {facts['from_date']} and {facts['to_date']}."]
+		for label, key in (("NDVI", "ndvi_delta"), ("NDWI", "ndwi_delta"), ("SAR change", "sar_change")):
+			value = facts.get(key)
+			if value is not None:
+				parts.append(f"{label} changed by {float(value):.3f}.")
+		if not facts["sar_available"]:
+			parts.append("Sentinel-1 evidence was unavailable for the selected interval.")
+		brief_text = " ".join(parts)
+	return {"available": llm_text is not None, "brief": brief_text, "facts": facts}
 
 
 @app.post("/preview/image")

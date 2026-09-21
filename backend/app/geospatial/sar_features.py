@@ -155,6 +155,25 @@ def find_matching_sar_pair(before_row, after_row) -> tuple[SarFeatures, SarFeatu
     return before_match[1], after_match[1]
 
 
+def find_matching_sar_observation(tile_id: str, target_date: str):
+    """Return the registered SAR row selected by the canonical match policy."""
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sar_tiles WHERE tile_id = ? ORDER BY acquisition_datetime ASC, period_start ASC",
+            (tile_id,),
+        ).fetchall()
+    matches = []
+    candidate_date = _coerce_date(target_date)
+    if candidate_date is None:
+        return None
+    for row in rows:
+        product_type = str(row["product_type"] or "").upper()
+        distance = _match_distance(row, candidate_date, product_type)
+        if distance is not None and product_type in {"GRD", "IW_MONTHLY_MOSAIC"}:
+            matches.append((distance, row))
+    return min(matches, key=lambda item: item[0])[1] if matches else None
+
+
 def _is_linear(tags: dict[str, str], values: np.ndarray) -> bool:
     text = " ".join(f"{k}={v}" for k, v in tags.items()).lower()
     if any(token in text for token in ("decibel", " db", "unit=db", "units=db")):

@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { Activity, ArrowUpRight, Gauge, TrendingDown, TrendingUp } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useVelocity } from '@/hooks/useVelocity';
+import { useAOIs, useAOITiles } from '@/hooks/useAOIs';
 import { useTileObservations } from '@/hooks/useTiles';
+import { useTemporalSignature } from '@/hooks/useTiles';
 import { GlassPanel } from '@/components/common/GlassPanel';
 import { ErrorCard } from '@/components/common/ErrorCard';
 import { SkeletonCard } from '@/components/common/SkeletonCard';
@@ -28,26 +30,35 @@ function Metric({ label, value, accent }: { label: string; value: number | strin
 }
 
 export const VelocityPage: React.FC = () => {
-  const { data, isLoading, isError, refetch } = useVelocity();
+  const { data, isLoading, isError, refetch } = useVelocity(48);
+  const { data: aois = [] } = useAOIs();
   const records = data || [];
+  const [selectedAOIId, setSelectedAOIId] = useState('');
   const [selectedTileId, setSelectedTileId] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
 
-  useEffect(() => {
-    if (!selectedTileId && records[0]) setSelectedTileId(records[0].tile_id);
-  }, [records, selectedTileId]);
+  const { data: aoiTiles } = useAOITiles(selectedAOIId || undefined);
+  const selectedSummary = aoiTiles?.tiles.find((item) => item.tile_id === selectedTileId);
+  const { data: selectedSignature } = useTemporalSignature(selectedTileId || undefined);
+  const selected = records.find((item) => item.tile_id === selectedTileId) || (selectedSummary ? {
+    ...selectedSummary,
+    series: selectedSignature?.series || [],
+    velocities: selectedSignature?.velocities || [],
+    score_sources: selectedSignature?.score_sources || [],
+    latest_velocity: selectedSignature?.latest_velocity ?? selectedSummary.latest_velocity,
+    acceleration: selectedSignature?.acceleration ?? selectedSummary.acceleration,
+    trend: selectedSignature?.trend || selectedSummary.trend || 'stable',
+  } : undefined);
+  const { data: selectedObservations = [] } = useTileObservations(selectedTileId || undefined);
 
-  const selected = records.find((item) => item.tile_id === selectedTileId) || records[0];
-  const { data: selectedObservations = [] } = useTileObservations(selected?.tile_id);
-
   useEffect(() => {
-    if (!selected) return;
-    const first = selected.first_observation || selectedObservations[0]?.acquisition_date || '';
-    const last = selected.latest_observation || selectedObservations[selectedObservations.length - 1]?.acquisition_date || '';
+    if (!selectedTileId) return;
+    const first = selectedSummary?.first_observation || selected?.first_observation || selectedObservations[0]?.acquisition_date || '';
+    const last = selectedSummary?.latest_observation || selected?.latest_observation || selectedObservations[selectedObservations.length - 1]?.acquisition_date || '';
     setFromDate((current) => (!current || !selectedObservations.some((item) => item.acquisition_date === current)) ? first : current);
     setToDate((current) => (!current || !selectedObservations.some((item) => item.acquisition_date === current)) ? last : current);
-  }, [selected?.tile_id, selectedObservations]);
+  }, [selectedTileId, selectedSummary, selected, selectedObservations]);
 
   const counts = records.reduce<Record<string, number>>((result, item) => {
     const trend = item.trend || 'stable';
@@ -56,7 +67,7 @@ export const VelocityPage: React.FC = () => {
   }, { stable: 0, steady_change: 0, accelerating: 0, decelerating: 0 });
 
   const ActiveIcon = selected ? trendMeta[selected.trend || 'stable'].icon : Activity;
-  const chartData = (selected?.series || []).map((point) => ({ ...point, date: point.date_pair.after, value: point.velocity }));
+  const chartData = (selectedSignature?.series || selected?.series || []).map((point) => ({ ...point, date: point.date_pair.after, value: point.velocity }));
 
   return (
     <div className="space-y-6">
@@ -78,30 +89,23 @@ export const VelocityPage: React.FC = () => {
       ) : (
         <>
           <GlassPanel className="p-5">
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
-              <label className="text-[10px] font-mono uppercase tracking-[0.18em] text-text-muted">Select tile
-                <select value={selected?.tile_id || ''} onChange={(event) => setSelectedTileId(event.target.value)} className="mt-2 w-full rounded-lg border border-white/[0.1] bg-space-950 px-3 py-2 text-xs text-text-primary">
-                  <option value="">No temporal signatures</option>
-                  {records.map((item) => <option key={item.tile_id} value={item.tile_id}>{item.tile_id}</option>)}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <label className="text-[10px] font-mono uppercase tracking-[0.18em] text-text-muted">Select area of interest
+                <select value={selectedAOIId} onChange={(event) => { setSelectedAOIId(event.target.value); setSelectedTileId(''); setFromDate(''); setToDate(''); }} className="mt-2 w-full rounded-lg border border-white/[0.1] bg-space-950 px-3 py-2 text-xs text-text-primary">
+                  <option value="">Select AOI</option>
+                  {aois.map((aoi) => <option key={aoi.aoi_id} value={aoi.aoi_id}>{aoi.name} ({aoi.tile_count} tiles)</option>)}
                 </select>
               </label>
-              <div className="grid grid-cols-3 gap-6 text-right">
-                <div>
-                  <div className="text-[10px] font-mono uppercase text-text-muted">First observation</div>
-                  <div className="mt-1 text-xs font-mono text-text-primary">{formatDate(selected?.first_observation)}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] font-mono uppercase text-text-muted">Latest observation</div>
-                  <div className="mt-1 text-xs font-mono text-text-primary">{formatDate(selected?.latest_observation)}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] font-mono uppercase text-text-muted">Observations</div>
-                  <div className="mt-1 text-xs font-mono text-aurora-300">{selected?.series?.length || 0}</div>
-                </div>
-              </div>
+              <label className="text-[10px] font-mono uppercase tracking-[0.18em] text-text-muted">Select tile
+                <select value={selectedTileId} disabled={!selectedAOIId} onChange={(event) => setSelectedTileId(event.target.value)} className="mt-2 w-full rounded-lg border border-white/[0.1] bg-space-950 px-3 py-2 text-xs text-text-primary disabled:opacity-40">
+                  <option value="">Select a tile</option>
+                  {(aoiTiles?.tiles || []).map((item) => <option key={item.tile_id} value={item.tile_id}>{item.tile_id} - {item.aoi_name} ({item.observation_count} observations)</option>)}
+                </select>
+              </label>
             </div>
           </GlassPanel>
 
+          {!selectedTileId ? <GlassPanel className="p-10 text-center"><div className="text-xs font-mono uppercase tracking-[0.2em] text-aurora-300">Temporal analysis ready</div><div className="mt-3 text-sm font-mono text-text-secondary">Select an Area of Interest and then choose a tile to inspect its complete change history, velocity, acceleration, optical signals, and Sentinel-1 evidence.</div></GlassPanel> : <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Metric label="Temporal Signatures" value={records.length} accent="text-aurora-300" />
             <Metric label="Accelerating" value={counts.accelerating || 0} accent="text-amber-300" />
@@ -144,7 +148,7 @@ export const VelocityPage: React.FC = () => {
             <GlassPanel className="p-6">
               <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-[0.16em] text-text-secondary"><Activity size={14} className="text-aurora-400" /> Temporal Activity Matrix</div>
               <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {records.slice(0, 48).map((item: VelocityTile) => (
+                {records.filter((item: VelocityTile) => !selectedAOIId || aoiTiles?.tiles.some((tile) => tile.tile_id === item.tile_id)).slice(0, 48).map((item: VelocityTile) => (
                   <Link key={item.tile_id} to={`/tiles/${item.tile_id}`} title={`${item.tile_id} - ${trendMeta[item.trend || 'stable'].label}`} className={`overflow-hidden border transition hover:scale-[1.02] ${item.tile_id === selected?.tile_id ? 'border-aurora-400 ring-1 ring-aurora-400/50' : 'border-white/10'} bg-space-950/60`}>
                     <TileThumbnail src={selectedObservations.find((obs) => obs.tile_id === item.tile_id)?.thumbnail_url || undefined} alt={item.tile_id} aspectRatio="video" unavailableLabel="IMAGE UNAVAILABLE" />
                     <div className="space-y-1 p-2">
@@ -207,6 +211,7 @@ export const VelocityPage: React.FC = () => {
               </Link>
             </div>
           </GlassPanel>
+          </>}
         </>
       )}
     </div>
