@@ -48,7 +48,7 @@ export const SignInPage: React.FC = () => {
                   Earth Observation
                 </div>
                 <h1 className="text-4xl font-semibold tracking-tight text-white md:text-6xl">
-                  SENTINEL<br />INTELLIGENCE
+                  GeoSpectra<br />Intelligence
                 </h1>
               </div>
 

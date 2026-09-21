@@ -59,21 +59,21 @@ export const BeforeAfterCompare: React.FC<BeforeAfterCompareProps> = ({
 
       {mode === 'side-by-side' ? (
         <div className="grid grid-cols-2 gap-3">
-          <TileThumbnail src={beforeUrl} alt="Before Tile" aspectRatio="square" unavailable={!beforeUrl} />
-          <TileThumbnail src={comparisonUrl} alt="After Tile" aspectRatio="square" unavailable={!comparisonUrl} />
+          <TileThumbnail src={beforeUrl} alt="Before Tile" aspectRatio="wide" objectFit="contain" unavailable={!beforeUrl} />
+          <TileThumbnail src={comparisonUrl} alt="After Tile" aspectRatio="wide" objectFit="contain" unavailable={!comparisonUrl} />
         </div>
       ) : (
-        <div className={cn('relative aspect-square w-full rounded-lg overflow-hidden border border-white/[0.1] select-none', fullBleed && 'min-h-0 flex-1 aspect-auto')}>
+        <div className={cn('relative mx-auto h-[min(50vh,500px)] min-h-[280px] max-h-[500px] w-full max-w-5xl overflow-hidden rounded-lg border border-white/[0.1] select-none', fullBleed && 'min-h-0 flex-1')}>
           <div className="absolute inset-0">
-            <TileThumbnail src={comparisonUrl} alt="After Tile" aspectRatio={fullBleed ? 'auto' : 'square'} className="h-full w-full" zoomOnHover={false} unavailable={!comparisonUrl} />
+            <TileThumbnail src={comparisonUrl} alt="After Tile" aspectRatio="auto" objectFit="contain" className="h-full w-full" zoomOnHover={false} unavailable={!comparisonUrl} />
             <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-space-950/80 font-mono text-[10px] text-aurora-400 border border-aurora-500/20">{showDifference ? 'DIFFERENCE' : 'AFTER'}</div>
           </div>
           <div className="absolute inset-0 overflow-hidden" style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}>
-            <TileThumbnail src={beforeUrl} alt="Before Tile" aspectRatio={fullBleed ? 'auto' : 'square'} className="h-full w-full" zoomOnHover={false} unavailable={!beforeUrl} />
+            <TileThumbnail src={beforeUrl} alt="Before Tile" aspectRatio="auto" objectFit="contain" className="h-full w-full" zoomOnHover={false} unavailable={!beforeUrl} />
             <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-space-950/80 font-mono text-[10px] text-text-secondary border border-white/[0.1]">BEFORE</div>
           </div>
-          {heatmapOverlay && differenceHeatmapUrl && <div className="absolute inset-0 pointer-events-none opacity-40 mix-blend-screen"><TileThumbnail src={differenceHeatmapUrl} alt="Heatmap overlay" aspectRatio={fullBleed ? 'auto' : 'square'} className="h-full w-full" zoomOnHover={false} /></div>}
-          {backendMask && backendMaskUrl && <div className="absolute inset-0 pointer-events-none opacity-25 mix-blend-screen"><TileThumbnail src={backendMaskUrl} alt="Backend difference mask" aspectRatio={fullBleed ? 'auto' : 'square'} className="h-full w-full" zoomOnHover={false} /></div>}
+          {heatmapOverlay && differenceHeatmapUrl && <div className="absolute inset-0 pointer-events-none opacity-40 mix-blend-screen"><TileThumbnail src={differenceHeatmapUrl} alt="Heatmap overlay" aspectRatio="auto" objectFit="contain" className="h-full w-full" zoomOnHover={false} /></div>}
+          {backendMask && backendMaskUrl && <div className="absolute inset-0 pointer-events-none opacity-25 mix-blend-screen"><TileThumbnail src={backendMaskUrl} alt="Backend difference mask" aspectRatio="auto" objectFit="contain" className="h-full w-full" zoomOnHover={false} /></div>}
           <div className="absolute top-0 bottom-0 w-0.5 bg-aurora-400 shadow-[0_0_10px_#00D4FF] cursor-ew-resize flex items-center justify-center pointer-events-none" style={{ left: `${sliderPos}%` }}><div className="w-5 h-5 rounded-full bg-space-900 border border-aurora-400 shadow-glow-cyan flex items-center justify-center text-aurora-400"><Sliders size={10} /></div></div>
           <input type="range" min={0} max={100} value={sliderPos} onChange={(event) => setSliderPos(Number(event.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize z-10" />
         </div>

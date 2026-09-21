@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Activity, ArrowLeft, Layers, ScanSearch } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useTileObservations, useTemporalAnalysis, useAnalysisBrief } from '@/hooks/useTiles';
@@ -8,7 +8,7 @@ import { BeforeAfterCompare } from '@/components/common/BeforeAfterCompare';
 import { TileThumbnail } from '@/components/common/TileThumbnail';
 import { ErrorCard } from '@/components/common/ErrorCard';
 import { SkeletonCard } from '@/components/common/SkeletonCard';
-import { formatDate } from '@/lib/utils';
+import { formatDate, getObservationImageUrl } from '@/lib/utils';
 
 interface SignalChartProps {
   title: string;
@@ -28,7 +28,7 @@ const SignalChart: React.FC<SignalChartProps> = ({ title, data, color, fromDate,
       <div className="text-[10px] font-mono text-text-muted">{formatDate(fromDate)} → {formatDate(toDate)}</div>
     </div>
     {data.length < 1 ? (
-      <div className="flex h-48 items-center justify-center text-[10px] font-mono text-text-muted">INSUFFICIENT VALID TEMPORAL DATA</div>
+      <div className="flex h-48 items-center justify-center text-[10px] font-mono text-text-muted">NO DATA AVAILABLE</div>
     ) : (
       <div className="mt-3 h-48">
         <ResponsiveContainer width="100%" height="100%">
@@ -51,6 +51,7 @@ const SignalChart: React.FC<SignalChartProps> = ({ title, data, color, fromDate,
 
 export const AnalysisStudioPage: React.FC = () => {
   const { tileId } = useParams<{ tileId: string }>();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [fromDate, setFromDate] = useState(searchParams.get('from_date') || searchParams.get('before') || '');
   const [toDate, setToDate] = useState(searchParams.get('to_date') || searchParams.get('after') || '');
@@ -58,7 +59,8 @@ export const AnalysisStudioPage: React.FC = () => {
   const [submitted, setSubmitted] = useState(false);
 
   const { data: observations, isLoading, isError } = useTileObservations(tileId);
-  const imageObservations = observations?.filter((item) => Boolean(item.image_url)) || [];
+  const imageObservations = observations?.filter((item) => Boolean(getObservationImageUrl(item))) || [];
+  const returnTo = searchParams.get('return_to');
 
   const validPair = Boolean(fromDate && toDate && fromDate < toDate);
   const { data: analysis } = useTemporalAnalysis(tileId, submitted && validPair ? fromDate : undefined, submitted && validPair ? toDate : undefined);
@@ -98,7 +100,7 @@ export const AnalysisStudioPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-start gap-3">
-        <button type="button" onClick={() => window.history.back()} className="mt-1 rounded-lg border border-white/[0.08] bg-white/[0.04] p-2 text-text-secondary transition hover:text-text-primary" aria-label="Back to tile"><ArrowLeft size={16} /></button>
+        <button type="button" onClick={() => returnTo ? navigate(returnTo) : navigate(-1)} className="mt-1 rounded-lg border border-white/[0.08] bg-white/[0.04] p-2 text-text-secondary transition hover:text-text-primary" aria-label="Back to previous page"><ArrowLeft size={16} /></button>
         <div>
           <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.22em] text-aurora-300"><ScanSearch size={13} /> GeoSpectra / Temporal Analysis</div>
           <h1 className="mt-2 text-2xl font-semibold text-text-primary">Analysis Studio</h1>
@@ -132,7 +134,7 @@ export const AnalysisStudioPage: React.FC = () => {
             <>
               <GlassPanel className="p-5">
                 <div className="mb-4 flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-text-secondary"><Layers size={14} className="text-aurora-400" /> Before / After Analysis</div>
-                <BeforeAfterCompare beforeUrl={analysis.before?.image_url ?? fromObservation?.thumbnail_url ?? null} afterUrl={analysis.after?.image_url ?? toObservation?.thumbnail_url ?? null} differenceHeatmapUrl={analysis.spatial_layers?.difference_heatmap_url} backendMaskUrl={analysis.spatial_layers?.backend_difference_mask_url} beforeDate={analysis.before?.date ?? fromDate} afterDate={analysis.after?.date ?? toDate} />
+                <BeforeAfterCompare beforeUrl={analysis.before?.image_url ?? getObservationImageUrl(fromObservation)} afterUrl={analysis.after?.image_url ?? getObservationImageUrl(toObservation)} differenceHeatmapUrl={analysis.spatial_layers?.difference_heatmap_url} backendMaskUrl={analysis.spatial_layers?.backend_difference_mask_url} beforeDate={analysis.before?.date ?? fromDate} afterDate={analysis.after?.date ?? toDate} />
               </GlassPanel>
 
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -181,15 +183,16 @@ export const AnalysisStudioPage: React.FC = () => {
                 {analysis.optical && (['ndvi', 'ndwi'] as const).map((key) => {
                   const points = (analysis.optical[key === 'ndvi' ? 'ndvi' : 'ndwi'] || []).map((value, index) => ({
                     date: analysis.optical.dates[index],
-                    value,
-                  })).filter((point) => point.date >= fromDate && point.date <= toDate);
+                    value: typeof value === 'number' && Number.isFinite(value) ? value : null,
+                  })).filter((point) => point.date >= fromDate && point.date <= toDate && point.value !== null);
                   return (
                     <SignalChart key={key} title={key.toUpperCase() + ' Temporal Signal'} data={points} color={key === 'ndvi' ? '#34D399' : '#60A5FA'} fromDate={fromDate} toDate={toDate} activeDate={activeDate} onHover={setActiveDate} unit={key.toUpperCase()} />
                   );
                 })}
                 {analysis.sar && (['vv_mean', 'vh_mean', 'vv_minus_vh'] as const).map((key) => {
-                  const points = (analysis.sar?.[key] || []).map((value, index) => ({ date: analysis.sar?.dates[index] || '', value: value ?? null })).filter((point) => point.date >= fromDate && point.date <= toDate);
-                  return <SignalChart key={key} title={`Sentinel-1 ${key.replace('_', ' ').toUpperCase()}`} data={points} color={key === 'vv_mean' ? '#FBBF24' : '#FB7185'} fromDate={fromDate} toDate={toDate} activeDate={activeDate} onHover={setActiveDate} unit="dB" />;
+                  const points = (analysis.sar?.[key] || []).map((value, index) => ({ date: analysis.sar?.dates[index] || '', value: typeof value === 'number' && Number.isFinite(value) ? value : null })).filter((point) => point.date >= fromDate && point.date <= toDate && point.value !== null);
+                  const title = key === 'vv_mean' ? 'Sentinel-1 VV MEAN (dB)' : key === 'vh_mean' ? 'Sentinel-1 VH MEAN (dB)' : 'Sentinel-1 VV - VH (dB)';
+                  return <SignalChart key={key} title={title} data={points} color={key === 'vv_mean' ? '#FBBF24' : key === 'vh_mean' ? '#FB7185' : '#A78BFA'} fromDate={fromDate} toDate={toDate} activeDate={activeDate} onHover={setActiveDate} unit="dB" />;
                 })}
               </div>
 
@@ -205,7 +208,7 @@ export const AnalysisStudioPage: React.FC = () => {
             <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">Full temporal context</div>
             <div className="mt-4 flex gap-3 overflow-x-auto pb-2">{imageObservations.map((item) => (
               <button type="button" key={item.observation_id} onClick={() => { setActiveDate(item.acquisition_date); setFromDate(item.acquisition_date); setSubmitted(false); }} className="w-28 min-w-28 text-left">
-                <TileThumbnail src={item.thumbnail_url ?? undefined} alt={item.acquisition_date} aspectRatio="square" className={item.acquisition_date === fromDate || item.acquisition_date === toDate || item.acquisition_date === activeDate ? 'ring-2 ring-aurora-400' : ''} />
+                <TileThumbnail src={getObservationImageUrl(item) ?? undefined} alt={item.acquisition_date} aspectRatio="square" className={item.acquisition_date === fromDate || item.acquisition_date === toDate || item.acquisition_date === activeDate ? 'ring-2 ring-aurora-400' : ''} />
                 <div className="mt-1 text-[10px] font-mono text-text-muted">{formatDate(item.acquisition_date)}</div>
               </button>
             ))}</div>

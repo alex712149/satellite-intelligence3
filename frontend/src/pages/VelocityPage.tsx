@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Activity, ArrowUpRight, Gauge, TrendingDown, TrendingUp } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useVelocity } from '@/hooks/useVelocity';
@@ -10,8 +10,7 @@ import { GlassPanel } from '@/components/common/GlassPanel';
 import { ErrorCard } from '@/components/common/ErrorCard';
 import { SkeletonCard } from '@/components/common/SkeletonCard';
 import { TileThumbnail } from '@/components/common/TileThumbnail';
-import { formatDate } from '@/lib/utils';
-import type { VelocityTile } from '@/types/api';
+import { formatDate, getObservationImageUrl } from '@/lib/utils';
 
 const trendMeta: Record<string, { label: string; color: string; icon: React.ElementType }> = {
   stable: { label: 'Stable', color: 'text-slate-300', icon: Gauge },
@@ -33,8 +32,9 @@ export const VelocityPage: React.FC = () => {
   const { data, isLoading, isError, refetch } = useVelocity(48);
   const { data: aois = [] } = useAOIs();
   const records = data || [];
-  const [selectedAOIId, setSelectedAOIId] = useState('');
-  const [selectedTileId, setSelectedTileId] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selectedAOIId, setSelectedAOIId] = useState(searchParams.get('aoi_id') || '');
+  const [selectedTileId, setSelectedTileId] = useState(searchParams.get('tile_id') || '');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
 
@@ -53,6 +53,19 @@ export const VelocityPage: React.FC = () => {
   const { data: selectedObservations = [] } = useTileObservations(selectedTileId || undefined);
 
   useEffect(() => {
+    if (selectedAOIId && aoiTiles && selectedTileId && !aoiTiles.tiles.some((item) => item.tile_id === selectedTileId)) {
+      setSelectedTileId('');
+    }
+  }, [aoiTiles, selectedAOIId, selectedTileId]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    if (selectedAOIId) params.set('aoi_id', selectedAOIId); else params.delete('aoi_id');
+    if (selectedTileId) params.set('tile_id', selectedTileId); else params.delete('tile_id');
+    if (params.toString() !== searchParams.toString()) setSearchParams(params, { replace: true });
+  }, [selectedAOIId, selectedTileId, searchParams, setSearchParams]);
+
+  useEffect(() => {
     if (!selectedTileId) return;
     const first = selectedSummary?.first_observation || selected?.first_observation || selectedObservations[0]?.acquisition_date || '';
     const last = selectedSummary?.latest_observation || selected?.latest_observation || selectedObservations[selectedObservations.length - 1]?.acquisition_date || '';
@@ -68,6 +81,8 @@ export const VelocityPage: React.FC = () => {
 
   const ActiveIcon = selected ? trendMeta[selected.trend || 'stable'].icon : Activity;
   const chartData = (selectedSignature?.series || selected?.series || []).map((point) => ({ ...point, date: point.date_pair.after, value: point.velocity }));
+  const matrixTiles = aoiTiles?.tiles || [];
+  const returnPath = `/velocity?aoi_id=${encodeURIComponent(selectedAOIId)}&tile_id=${encodeURIComponent(selectedTileId)}`;
 
   return (
     <div className="space-y-6">
@@ -148,9 +163,9 @@ export const VelocityPage: React.FC = () => {
             <GlassPanel className="p-6">
               <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-[0.16em] text-text-secondary"><Activity size={14} className="text-aurora-400" /> Temporal Activity Matrix</div>
               <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {records.filter((item: VelocityTile) => !selectedAOIId || aoiTiles?.tiles.some((tile) => tile.tile_id === item.tile_id)).slice(0, 48).map((item: VelocityTile) => (
-                  <Link key={item.tile_id} to={`/tiles/${item.tile_id}`} title={`${item.tile_id} - ${trendMeta[item.trend || 'stable'].label}`} className={`overflow-hidden border transition hover:scale-[1.02] ${item.tile_id === selected?.tile_id ? 'border-aurora-400 ring-1 ring-aurora-400/50' : 'border-white/10'} bg-space-950/60`}>
-                    <TileThumbnail src={selectedObservations.find((obs) => obs.tile_id === item.tile_id)?.thumbnail_url || undefined} alt={item.tile_id} aspectRatio="video" unavailableLabel="IMAGE UNAVAILABLE" />
+                {matrixTiles.slice(0, 48).map((item) => (
+                  <Link key={item.tile_id} to={`/velocity?aoi_id=${encodeURIComponent(selectedAOIId)}&tile_id=${encodeURIComponent(item.tile_id)}`} title={`${item.tile_id} - ${trendMeta[item.trend || 'stable'].label}`} className={`overflow-hidden border transition hover:scale-[1.02] ${item.tile_id === selected?.tile_id ? 'border-aurora-400 ring-1 ring-aurora-400/50' : 'border-white/10'} bg-space-950/60`}>
+                    <TileThumbnail src={item.thumbnail_url || undefined} alt={item.tile_id} aspectRatio="video" unavailableLabel="IMAGE UNAVAILABLE" />
                     <div className="space-y-1 p-2">
                       <div className="truncate text-[10px] font-mono text-text-primary">{item.tile_id}</div>
                       <div className="flex justify-between text-[9px] font-mono">
@@ -162,7 +177,7 @@ export const VelocityPage: React.FC = () => {
                   </Link>
                 ))}
               </div>
-              {records.length === 0 && <div className="mt-8 text-center text-xs font-mono text-text-muted">NO VALID OBSERVATIONS</div>}
+              {matrixTiles.length === 0 && <div className="mt-8 text-center text-xs font-mono text-text-muted">NO VALID OBSERVATIONS</div>}
               <div className="mt-6 space-y-2 border-t border-white/[0.06] pt-4 text-[10px] font-mono uppercase tracking-wider text-text-muted">
                 <div className="flex justify-between"><span>Accelerating</span><span className="text-amber-300">{counts.accelerating || 0}</span></div>
                 <div className="flex justify-between"><span>Steady change</span><span className="text-sky-300">{counts.steady_change || 0}</span></div>
@@ -182,8 +197,8 @@ export const VelocityPage: React.FC = () => {
             </div>
             <div className="mt-5 flex gap-3 overflow-x-auto pb-2">
               {selectedObservations.map((item) => (
-                <Link key={item.observation_id} to={selected ? `/tiles/${selected.tile_id}/analysis?from_date=${item.acquisition_date}&to_date=${selected.latest_observation || item.acquisition_date}` : '#'} className="w-32 min-w-32 overflow-hidden rounded-lg border border-white/[0.08] bg-space-950/60 transition hover:border-aurora-400">
-                  <TileThumbnail src={item.thumbnail_url || undefined} alt={item.acquisition_date} aspectRatio="square" />
+                <Link key={item.observation_id} to={selected ? `/tiles/${selected.tile_id}/analysis?from_date=${item.acquisition_date}&to_date=${selected.latest_observation || item.acquisition_date}&return_to=${encodeURIComponent(returnPath)}` : '#'} className="w-32 min-w-32 overflow-hidden rounded-lg border border-white/[0.08] bg-space-950/60 transition hover:border-aurora-400">
+                  <TileThumbnail src={getObservationImageUrl(item) || undefined} alt={item.acquisition_date} aspectRatio="square" />
                   <div className="space-y-1 p-2">
                     <div className="text-[10px] font-mono text-text-primary">{formatDate(item.acquisition_date)}</div>
                     <div className="text-[9px] font-mono text-text-muted">NDVI {item.ndvi_mean?.toFixed(3) || '--'}</div>
@@ -206,7 +221,7 @@ export const VelocityPage: React.FC = () => {
                   {selectedObservations.map((item) => <option key={item.observation_id} value={item.acquisition_date}>{formatDate(item.acquisition_date)}</option>)}
                 </select>
               </label>
-              <Link to={selected && fromDate && toDate && fromDate < toDate ? `/tiles/${selected.tile_id}/analysis?from_date=${fromDate}&to_date=${toDate}` : '#'} className={`rounded-lg px-4 py-2.5 text-center text-xs font-mono font-semibold ${selected && fromDate && toDate && fromDate < toDate ? 'bg-aurora-400 text-space-950' : 'pointer-events-none bg-white/[0.08] text-text-muted'}`}>
+              <Link to={selected && fromDate && toDate && fromDate < toDate ? `/tiles/${selected.tile_id}/analysis?from_date=${fromDate}&to_date=${toDate}&return_to=${encodeURIComponent(returnPath)}` : '#'} className={`rounded-lg px-4 py-2.5 text-center text-xs font-mono font-semibold ${selected && fromDate && toDate && fromDate < toDate ? 'bg-aurora-400 text-space-950' : 'pointer-events-none bg-white/[0.08] text-text-muted'}`}>
                 View Analysis
               </Link>
             </div>

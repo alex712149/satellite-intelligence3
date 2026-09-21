@@ -51,3 +51,7 @@ export function formatDateTime(dateString: string | null | undefined): string {
     return dateString;
   }
 }
+
+export function getObservationImageUrl(observation: { thumbnail_url?: string | null; image_url?: string | null } | null | undefined): string | null {
+  return observation?.thumbnail_url || observation?.image_url || null;
+}

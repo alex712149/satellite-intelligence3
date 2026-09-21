@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Satellite, ZoomIn } from 'lucide-react';
 
@@ -12,6 +12,7 @@ interface TileThumbnailProps {
   unavailableLabel?: string;
   onOpenZoom?: (src: string | null | undefined) => void;
   showZoomButton?: boolean;
+  objectFit?: 'cover' | 'contain';
 }
 
 export const TileThumbnail: React.FC<TileThumbnailProps> = ({
@@ -24,6 +25,7 @@ export const TileThumbnail: React.FC<TileThumbnailProps> = ({
   unavailableLabel = 'Source Imagery Unavailable',
   onOpenZoom,
   showZoomButton = false,
+  objectFit = 'cover',
 }) => {
   const [hasError, setHasError] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -38,6 +40,11 @@ export const TileThumbnail: React.FC<TileThumbnailProps> = ({
   const showUnavailable = unavailable || !src;
   const showPlaceholder = showUnavailable || hasError;
   const canZoom = !!onOpenZoom && !!src && !showPlaceholder;
+
+  useEffect(() => {
+    setHasError(false);
+    setIsLoaded(false);
+  }, [src]);
 
   return (
     <div
@@ -77,7 +84,7 @@ export const TileThumbnail: React.FC<TileThumbnailProps> = ({
               onOpenZoom?.(src);
             }}
             className={cn(
-              'w-full h-full object-cover transition-transform duration-300 cursor-pointer',
+              `w-full h-full object-${objectFit} transition-transform duration-300 cursor-pointer`,
               zoomOnHover && 'group-hover:scale-105',
               isLoaded ? 'opacity-100' : 'opacity-0'
             )}

@@ -1029,7 +1029,12 @@ def tile_analysis_series(tile_id: str):
 		"coverage": {"first_date": history[0]["acquisition_date"], "latest_date": history[-1]["acquisition_date"], "observation_count": len(history), "sar_observation_count": len(sar_rows)},
 		"velocity_series": [{"date": item["date_pair"]["after"], "before": item["date_pair"]["before"], "after": item["date_pair"]["after"], "velocity": item["velocity"], "change_score": item["velocity"] * max((datetime.fromisoformat(item["date_pair"]["after"]) - datetime.fromisoformat(item["date_pair"]["before"])).days, 1), "source": item["source"]} for item in velocity.series],
 		"optical_series": {name: [{"date": row["acquisition_date"], "value": row[column]} for row in history if row[column] is not None] for name, column in (("ndvi", "ndvi_mean"), ("ndwi", "ndwi_mean"))},
-		"sar_series": {"vv": [{"date": (row["acquisition_datetime"] or row["period_start"] or row["period_end"])[:10], "datetime": row["acquisition_datetime"], "value_db": row["vv_mean_db"], "observation_id": row["sar_tile_id"]} for row in sar_rows if row["vv_mean_db"] is not None], "vh": [{"date": (row["acquisition_datetime"] or row["period_start"] or row["period_end"])[:10], "datetime": row["acquisition_datetime"], "value_db": row["vh_mean_db"], "observation_id": row["sar_tile_id"]} for row in sar_rows if row["vh_mean_db"] is not None], "vv_minus_vh": [], "change_score": [], "valid_fraction": []},
+		"sar_series": {
+			"vv": [{"date": (row["acquisition_datetime"] or row["period_start"] or row["period_end"])[:10], "datetime": row["acquisition_datetime"], "value_db": row["vv_mean_db"], "observation_id": row["sar_tile_id"]} for row in sar_rows if row["vv_mean_db"] is not None],
+			"vh": [{"date": (row["acquisition_datetime"] or row["period_start"] or row["period_end"])[:10], "datetime": row["acquisition_datetime"], "value_db": row["vh_mean_db"], "observation_id": row["sar_tile_id"]} for row in sar_rows if row["vh_mean_db"] is not None],
+			"vv_minus_vh": [{"date": (row["acquisition_datetime"] or row["period_start"] or row["period_end"])[:10], "datetime": row["acquisition_datetime"], "value_db": row["vv_minus_vh_db"], "observation_id": row["sar_tile_id"]} for row in sar_rows if row["vv_minus_vh_db"] is not None],
+			"change_score": [], "valid_fraction": [{"date": (row["acquisition_datetime"] or row["period_start"] or row["period_end"])[:10], "datetime": row["acquisition_datetime"], "value": row["valid_pixels"], "observation_id": row["sar_tile_id"]} for row in sar_rows if row["valid_pixels"] is not None],
+		},
 		"fusion_series": {"change_score": [], "embedding_drift": []},
 	}
 
@@ -1179,6 +1184,9 @@ def system_llm_status():
 @app.post("/tiles/{tile_id}/analysis/brief")
 def tile_analysis_brief(tile_id: str, request: Request, payload: dict):
 	from backend.app.change.llm_brief import generate_llm_brief
+	def rounded(value, digits=4):
+		return round(float(value), digits) if isinstance(value, (int, float)) else value
+
 	before_date = payload.get("before_date")
 	after_date = payload.get("after_date")
 	analysis = tile_analysis(tile_id, request, from_date=before_date, to_date=after_date)
@@ -1186,11 +1194,12 @@ def tile_analysis_brief(tile_id: str, request: Request, payload: dict):
 	facts = {
 		"tile_id": tile_id, "aoi_id": analysis.get("aoi_id"),
 		"from_date": analysis["range"]["from"], "to_date": analysis["range"]["to"],
-		"separation_days": analysis["range"]["days"], "change_score": metrics.get("overall_change_score"),
-		"velocity": metrics.get("velocity"), "acceleration": metrics.get("acceleration"),
-		"ndvi_delta": metrics.get("ndvi_delta"), "ndwi_delta": metrics.get("ndwi_delta"),
-		"sar_change": metrics.get("sar_change"), "sar_vv_delta": metrics.get("sar_vv_delta"),
-		"sar_vh_delta": metrics.get("sar_vh_delta"), "sar_available": analysis["quality"].get("sar_available"),
+		"separation_days": analysis["range"]["days"], "change_score": rounded(metrics.get("overall_change_score")),
+		"velocity": rounded(metrics.get("velocity"), 5), "acceleration": rounded(metrics.get("acceleration"), 7),
+		"trend": getattr(analysis.get("velocity"), "trend", None),
+		"ndvi_delta": rounded(metrics.get("ndvi_delta")), "ndwi_delta": rounded(metrics.get("ndwi_delta")),
+		"sar_change": rounded(metrics.get("sar_change")), "sar_vv_delta": rounded(metrics.get("sar_vv_delta")),
+		"sar_vh_delta": rounded(metrics.get("sar_vh_delta")), "sar_available": analysis["quality"].get("sar_available"),
 		"observations_used": analysis["quality"].get("observations_used"), "modality": "optical and SAR temporal evidence" if analysis["quality"].get("sar_available") else "optical temporal evidence",
 	}
 	llm_text = generate_llm_brief(facts)
