@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Activity, ArrowLeft, Layers, ScanSearch } from 'lucide-react';
+import { Activity, ArrowLeft, Layers, ScanSearch, X } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useTileObservations, useTemporalAnalysis, useAnalysisBrief } from '@/hooks/useTiles';
 import { GlassPanel } from '@/components/common/GlassPanel';
@@ -57,6 +57,7 @@ export const AnalysisStudioPage: React.FC = () => {
   const [toDate, setToDate] = useState(searchParams.get('to_date') || searchParams.get('after') || '');
   const [activeDate, setActiveDate] = useState<string | undefined>();
   const [submitted, setSubmitted] = useState(false);
+  const [isCompareFullscreen, setIsCompareFullscreen] = useState(false);
 
   const { data: observations, isLoading, isError } = useTileObservations(tileId);
   const imageObservations = observations?.filter((item) => Boolean(getObservationImageUrl(item))) || [];
@@ -134,8 +135,34 @@ export const AnalysisStudioPage: React.FC = () => {
             <>
               <GlassPanel className="p-5">
                 <div className="mb-4 flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-text-secondary"><Layers size={14} className="text-aurora-400" /> Before / After Analysis</div>
-                <BeforeAfterCompare beforeUrl={analysis.before?.image_url ?? getObservationImageUrl(fromObservation)} afterUrl={analysis.after?.image_url ?? getObservationImageUrl(toObservation)} differenceHeatmapUrl={analysis.spatial_layers?.difference_heatmap_url} backendMaskUrl={analysis.spatial_layers?.backend_difference_mask_url} beforeDate={analysis.before?.date ?? fromDate} afterDate={analysis.after?.date ?? toDate} />
+                <BeforeAfterCompare beforeUrl={analysis.before?.image_url ?? getObservationImageUrl(fromObservation)} afterUrl={analysis.after?.image_url ?? getObservationImageUrl(toObservation)} differenceHeatmapUrl={analysis.spatial_layers?.difference_heatmap_url} backendMaskUrl={analysis.spatial_layers?.backend_difference_mask_url} beforeDate={analysis.before?.date ?? fromDate} afterDate={analysis.after?.date ?? toDate} onFullscreen={() => setIsCompareFullscreen(true)} showDifferenceMap={false} />
               </GlassPanel>
+
+              {isCompareFullscreen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-space-950/90 p-3 backdrop-blur-sm">
+                  <GlassPanel className="relative h-full w-full max-w-7xl bg-space-900/95 p-4">
+                    <button
+                      type="button"
+                      aria-label="Close fullscreen comparison"
+                      onClick={() => setIsCompareFullscreen(false)}
+                      className="absolute right-5 top-5 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-white/[0.12] bg-space-950/80 text-text-secondary transition hover:text-text-primary"
+                    >
+                      <X size={16} />
+                    </button>
+                    <BeforeAfterCompare
+                      beforeUrl={analysis.before?.image_url ?? getObservationImageUrl(fromObservation)}
+                      afterUrl={analysis.after?.image_url ?? getObservationImageUrl(toObservation)}
+                      differenceHeatmapUrl={analysis.spatial_layers?.difference_heatmap_url}
+                      backendMaskUrl={analysis.spatial_layers?.backend_difference_mask_url}
+                      beforeDate={analysis.before?.date ?? fromDate}
+                      afterDate={analysis.after?.date ?? toDate}
+                      fullBleed
+                      onFullscreen={() => setIsCompareFullscreen(false)}
+                      showDifferenceMap={false}
+                    />
+                  </GlassPanel>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
                 {[
@@ -146,37 +173,6 @@ export const AnalysisStudioPage: React.FC = () => {
                   ['Valid pixels', analysis.quality && analysis.quality.observations_used !== undefined ? `${analysis.quality.observations_used}%` : 'UNAVAILABLE'],
                 ].map(([label, value]) => <div key={label} className="border-l border-white/[0.1] pl-3"><div className="text-[10px] font-mono uppercase text-text-muted">{label}</div><div className="mt-1 text-sm font-mono text-text-primary">{String(value)}</div></div>)}
               </div>
-
-              <GlassPanel className="p-5">
-                <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">What changed?</div>
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {[
-                    ['NDVI', analysis.metrics?.ndvi_delta],
-                    ['NDWI', analysis.metrics?.ndwi_delta],
-                    ['Velocity', analysis.metrics?.velocity],
-                    ['Acceleration', analysis.velocity?.acceleration],
-                  ].map(([key, rawValue]) => {
-                    const value = typeof rawValue === 'number' ? rawValue : null;
-                    return (
-                      <div key={String(key)} className="flex items-center justify-between border-b border-white/[0.06] pb-3 text-xs font-mono">
-                        <span className="uppercase text-text-muted">{String(key)}</span>
-                        <span className={value !== null && value < 0 ? 'text-rose-300' : 'text-emerald-300'}>{value !== null ? `${value > 0 ? '+' : ''}${value.toFixed(3)}` : 'UNAVAILABLE'}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </GlassPanel>
-
-              <GlassPanel className="p-5">
-                <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">What changed?</div>
-                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {['NDVI', 'NDWI', 'NDBI', 'NDMI', 'NBR', 'MNDWI', 'VV', 'VH', 'VV-VH', 'SAR CHANGE', 'VELOCITY', 'ACCELERATION', 'FUSED CHANGE'].map((label) => {
-                    const key = label.toLowerCase().replace('-', '_').replace(' ', '_');
-                    const value = (analysis.metrics as unknown as Record<string, unknown>)[key];
-                    return <div key={label} className="flex justify-between border-b border-white/[0.06] py-2 text-[11px] font-mono"><span className="text-text-muted">{label}</span><span className="text-text-primary">{typeof value === 'number' ? value.toFixed(3) : 'UNAVAILABLE'}</span></div>;
-                  })}
-                </div>
-              </GlassPanel>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <SignalChart title="Temporal Change Velocity" data={velocityChart} color="#00D4FF" fromDate={fromDate} toDate={toDate} activeDate={activeDate} onHover={setActiveDate} unit="score/day" />

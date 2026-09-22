@@ -15,6 +15,7 @@ interface BeforeAfterCompareProps {
   defaultMode?: 'side-by-side' | 'slider';
   fullBleed?: boolean;
   onFullscreen?: () => void;
+  showDifferenceMap?: boolean;
 }
 
 export const BeforeAfterCompare: React.FC<BeforeAfterCompareProps> = ({
@@ -28,6 +29,7 @@ export const BeforeAfterCompare: React.FC<BeforeAfterCompareProps> = ({
   defaultMode = 'slider',
   fullBleed = false,
   onFullscreen,
+  showDifferenceMap = true,
 }) => {
   const [mode, setMode] = useState<'side-by-side' | 'slider'>(defaultMode);
   const [sliderPos, setSliderPos] = useState(50);
@@ -63,7 +65,7 @@ export const BeforeAfterCompare: React.FC<BeforeAfterCompareProps> = ({
           <TileThumbnail src={comparisonUrl} alt="After Tile" aspectRatio="wide" objectFit="contain" unavailable={!comparisonUrl} />
         </div>
       ) : (
-        <div className={cn('relative mx-auto h-[min(50vh,500px)] min-h-[280px] max-h-[500px] w-full max-w-5xl overflow-hidden rounded-lg border border-white/[0.1] select-none', fullBleed && 'min-h-0 flex-1')}>
+        <div className={cn('relative mx-auto w-full max-w-5xl overflow-hidden rounded-lg border border-white/[0.1] select-none', fullBleed ? 'min-h-0 flex-1' : 'h-[min(68vh,760px)] min-h-[360px] max-h-[760px]')}>
           <div className="absolute inset-0">
             <TileThumbnail src={comparisonUrl} alt="After Tile" aspectRatio="auto" objectFit="contain" className="h-full w-full" zoomOnHover={false} unavailable={!comparisonUrl} />
             <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-space-950/80 font-mono text-[10px] text-aurora-400 border border-aurora-500/20">{showDifference ? 'DIFFERENCE' : 'AFTER'}</div>
@@ -79,7 +81,7 @@ export const BeforeAfterCompare: React.FC<BeforeAfterCompareProps> = ({
         </div>
       )}
 
-      {differenceHeatmapUrl && !onFullscreen && <div className="pt-2 border-t border-white/[0.06]"><div className="flex items-center justify-between text-[10px] font-mono text-rose-400 mb-1.5"><span>SPECTRAL DELTA DIFFERENCE MAP</span><span>Δ SIGNAL</span></div><TileThumbnail src={differenceHeatmapUrl} alt="Difference Map" aspectRatio="wide" unavailable={!differenceHeatmapUrl} /></div>}
+      {showDifferenceMap && differenceHeatmapUrl && !onFullscreen && <div className="pt-2 border-t border-white/[0.06]"><div className="flex items-center justify-between text-[10px] font-mono text-rose-400 mb-1.5"><span>SPECTRAL DELTA DIFFERENCE MAP</span><span>Δ SIGNAL</span></div><TileThumbnail src={differenceHeatmapUrl} alt="Difference Map" aspectRatio="wide" unavailable={!differenceHeatmapUrl} /></div>}
     </div>
   );
 };
